@@ -1,0 +1,60 @@
+name: Bug report
+description: Something in Johnny's Messenger isn't working
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! The more detail you give, the quicker it gets fixed.
+        Tip: to see Lua errors in game, type `/console scriptErrors 1` (or tick Interface > Help > Display Lua Errors), then reproduce the problem.
+
+  - type: input
+    id: version
+    attributes:
+      label: Addon version
+      description: Shown on the release you downloaded, or in the AddOns list at character select.
+      placeholder: "1.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What went wrong, and what did you expect to happen instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: How can the problem be triggered?
+    validations:
+      required: false
+
+  - type: textarea
+    id: lua-error
+    attributes:
+      label: Lua error
+      description: Paste the full error text if you got one (from the error popup, Swatter or BugSack).
+      render: text
+    validations:
+      required: false
+
+  - type: input
+    id: realm
+    attributes:
+      label: Warmane realm
+      placeholder: "e.g. Icecrown, Lordaeron, Onyxia"
+    validations:
+      required: false
+
+  - type: textarea
+    id: other-addons
+    attributes:
+      label: Other addons installed
+      description: Especially any other Johnny's addons.
+    validations:
+      required: false

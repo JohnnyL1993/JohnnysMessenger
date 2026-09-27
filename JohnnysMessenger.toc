@@ -1,0 +1,19 @@
+## Interface: 30300
+## Title: Johnny's Messenger
+## Notes: Teams-style whisper messenger. Left pane lists your conversations, right pane shows the open thread.
+## Author: Johnny
+## Version: 1.0
+## SavedVariables: JohnnysMessengerDB
+## DefaultState: Enabled
+
+Libs\Includes.xml
+
+Core.lua
+Modules\Skin.lua
+Modules\ClassColor.lua
+Modules\ConversationStore.lua
+Modules\WhisperEngine.lua
+Modules\GearScan.lua
+Modules\MainFrame.lua
+Modules\Minimap.lua
+Modules\SlashCommands.lua
