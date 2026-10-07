@@ -1,0 +1,8 @@
+<Bindings>
+	<Binding name="JOHNNYSMESSENGER_TOGGLE" header="JOHNNYSMESSENGER">
+		JM.MainFrame:Toggle()
+	</Binding>
+	<Binding name="JOHNNYSMESSENGER_REPLY">
+		SlashCmdList["JOHNNYSMESSENGER"]("reply")
+	</Binding>
+</Bindings>

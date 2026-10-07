@@ -1,8 +1,8 @@
 -- Whisper capture/send, adapted from WIM's Modules\WhisperEngine.lua but
--- feeding JM.Store instead of a per-conversation floating window. Every
--- whisper-related event is blocked from the default chat frame so this
+-- feeding JM.Store instead of a per-conversation floating window. By default
+-- every whisper-related event is blocked from the default chat frame so this
 -- addon's window is the sole surface for whispers (Teams-style DMs, not
--- duplicated into the chat log).
+-- duplicated into the chat log); the hideFromChat setting turns that off.
 JM.Whisper = {}
 local WhisperEngine = JM.Whisper
 
@@ -20,7 +20,9 @@ end
 -- delegate(self, eventItem, ...) by LibChatHandler - self is the module
 -- table here, eventItem is the actual chat-event object to block.
 local function BlockController(self, eventItem)
-	eventItem:BlockFromChatFrame()
+	if JM.Settings:Get("hideFromChat") then
+		eventItem:BlockFromChatFrame()
+	end
 end
 WhisperEngine.CHAT_MSG_WHISPER_CONTROLLER = BlockController
 WhisperEngine.CHAT_MSG_WHISPER_INFORM_CONTROLLER = BlockController
@@ -30,9 +32,14 @@ WhisperEngine.CHAT_MSG_DND_CONTROLLER = BlockController
 
 function WhisperEngine:CHAT_MSG_WHISPER(msg, author, _, _, _, _, _, _, _, _, _, guid)
 	local englishClass = JM.ClassColor:GetClassByGUID(guid)
-	JM.Store:AddMessage(author, englishClass, msg, true)
+	local convo = JM.Store:AddMessage(author, englishClass, msg, true)
 	ChatEdit_SetLastTellTarget(author)
 	local name = JM.Store.FormatUserName(author)
+	-- The default chat frame plays this itself when it shows the whisper, so
+	-- only play it when we've hidden the whisper from chat.
+	if JM.Settings:Get("sound") and JM.Settings:Get("hideFromChat") and convo and not convo.muted then
+		PlaySound("TellMessage")
+	end
 	-- Pop the window open on the incoming conversation if it's not already
 	-- open on something else, same as WIM did for individual whisper windows
 	-- - whispers otherwise have no other visible surface since they're
@@ -49,13 +56,26 @@ function WhisperEngine:CHAT_MSG_WHISPER_INFORM(msg, target, _, _, _, _, _, _, _,
 	JM.MainFrame:OnMessageReceived(JM.Store.FormatUserName(target))
 end
 
-function WhisperEngine:CHAT_MSG_AFK(_, author)
-	local convo = JM.Store:GetConversation(author)
-	if convo then
+-- Their AFK/DND auto-reply: mark them away and show the reply in the thread.
+local function AwayReply(flag, label)
+	return function(self, msg, author)
+		local convo = JM.Store:GetConversation(author)
+		if not convo then
+			return
+		end
 		convo.online = true
+		convo.away = flag
+		local name = JM.Store.FormatUserName(author)
+		local text = name .. " is " .. label
+		if msg and msg ~= "" then
+			text = text .. ": " .. msg
+		end
+		JM.Store:AddSystemMessage(name, text)
+		JM.MainFrame:OnMessageReceived(name)
 	end
 end
-WhisperEngine.CHAT_MSG_DND = WhisperEngine.CHAT_MSG_AFK
+WhisperEngine.CHAT_MSG_AFK = AwayReply("afk", "away")
+WhisperEngine.CHAT_MSG_DND = AwayReply("dnd", "busy (do not disturb)")
 
 local notFoundPattern
 function WhisperEngine:CHAT_MSG_SYSTEM(msg)
@@ -64,8 +84,11 @@ function WhisperEngine:CHAT_MSG_SYSTEM(msg)
 	if offlineName then
 		local convo = JM.Store:GetConversation(offlineName)
 		if convo then
+			local name = JM.Store.FormatUserName(offlineName)
 			convo.online = false
-			JM.MainFrame:OnMessageReceived(JM.Store.FormatUserName(offlineName))
+			convo.away = nil
+			JM.Store:AddSystemMessage(name, name .. " is not online.")
+			JM.MainFrame:OnMessageReceived(name)
 		end
 	end
 end

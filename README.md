@@ -4,6 +4,26 @@ A World of Warcraft 3.3.5a addon for the Warmane private server.
 
 Teams-style whisper messenger. Left pane lists your conversations, right pane shows the open thread.
 
+## Features
+
+- **Chat bubbles**: their messages on the left, yours on the right. Messages within two minutes of each other are grouped under one name and time. Day separators and a "New messages" divider mark where you left off.
+- **Clickable links**: item, spell and achievement links in a message show tooltips and can be clicked. Web addresses open a copy box. Right-click a bubble to copy its text.
+- **Contact list**: class icons, online/away/busy/offline dots (from your friends list, guild and group), last-message preview, unread badges and a search box.
+- **Right-click a contact** to pin it to the top, mute it, mark it unread, invite them, run `/who`, or remove the conversation.
+- **Reply box**: each conversation keeps its own draft. Quick replies are one click away, and Up/Down recalls messages you've sent.
+- **Resizable window**: drag the bottom-right corner, or drag the line between the two panes. The window fades when you're not using it.
+- **Settings** (gear button in the title bar):
+  - Auto-open on incoming whispers
+  - Hide whispers from the default chat
+  - Whisper sound
+  - Hide during combat
+  - 12h/24h time
+  - Opacity, scale and font size
+  - History limits
+  - Quick replies
+- **Minimap button** with an unread count, a pulse while anything is unread, and the top unread senders in its tooltip.
+- **Keybindings** under Key Bindings > AddOns: toggle the window, reply to the last whisper.
+
 ## Requirements
 
 No other addons required.
@@ -23,7 +43,10 @@ Download the latest release zip, delete the old `JohnnysMessenger` folder, and e
 
 | Command | What it does |
 | --- | --- |
-| `/jm or /messenger` | Open the messenger window |
+| `/jm` or `/messenger` | Toggle the messenger window |
+| `/jm reply` | Open the last person who whispered you |
+| `/jm settings` | Open settings |
+| `/jm help` | List commands |
 
 ## Other Johnny's addons
 

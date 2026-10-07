@@ -1,321 +1,374 @@
--- The two-pane Teams-style window: left = conversation list (pooled rows in
--- a scrollframe, modeled on JohnnysAddonHub's RaidBrowserUI/BlackListUI list
--- pattern), right = the open thread. The thread is a single ScrollingMessageFrame
--- (like a real chat window) rather than pooled per-message rows, so item/
--- achievement/spell links are clickable - this is the exact widget/script
--- setup the actual WIM addon uses for the same purpose (see its
--- Sources/MessageWindows.lua, chat_display), confirmed working on this
--- client. An earlier SimpleHTML-based attempt at the same goal silently
--- failed to parse hyperlinks at all here; ScrollingMessageFrame is the
--- proven option. Trade-off: messages render in one shared left-aligned
--- column like a normal chat log, not per-side bubbles.
+-- The two-pane messenger window, laid out after WhisperMessenger: a title bar
+-- (new whisper / mark all read / settings / close), a resizable contacts pane
+-- on the left (JM.ContactList), and the open thread on the right - a header
+-- with presence info, the bubble transcript (JM.Transcript) and the reply
+-- box (JM.Composer). The settings page (JM.Settings) swaps in for the
+-- right pane. This module owns the window chrome and the selection state and
+-- coordinates the others.
 JM.MainFrame = {}
 local MainFrame = JM.MainFrame
 local Skin = JM.Skin
 
-local FRAME_WIDTH, FRAME_HEIGHT = 600, 450
-local LEFT_PANEL_WIDTH = 170
-local ROW_WIDTH = LEFT_PANEL_WIDTH - 26 -- scrollbar clearance
-local ROW_HEIGHT = 44
+local DEFAULT_W, DEFAULT_H = 760, 500
+local MIN_W, MIN_H = 520, 340
+local LIST_MIN, LIST_MAX, LIST_DEFAULT = 160, 320, 220
+local RIGHT_MIN = 300
+local TITLE_H = 30
+local MARGIN = 10
+local DIVIDER_W = 6
 
-local mainFrame, listContent, msgDisplay, editBox, headerName, inviteBtn, scanBtn, scanResultText, emptyText
-local rows = {}
-local selectedName
+local mainFrame, listPanel, divider, rightPane, threadPane, settingsPage, emptyPane
+local headerIcon, headerName, headerDot, headerStatus, headerSub, inviteBtn, scanBtn, scanResultText
+local settingsBtn
+local selectedName, dividerTime
+local hiddenByCombat
+local BuildFrame -- defined below; referenced by functions declared earlier
 
-local function TruncateText(text, maxLen)
-	text = text or ""
-	if string.len(text) > maxLen then
-		return string.sub(text, 1, maxLen) .. "..."
-	end
-	return text
+--------------------------------------
+--   Saved window geometry          --
+--------------------------------------
+
+local function WindowDB()
+	JM.db.window = JM.db.window or {}
+	return JM.db.window
 end
 
-local function RelativeTime(epoch)
-	if not epoch or epoch == 0 then
-		return ""
-	end
-	local diff = time() - epoch
-	if diff < 60 then
-		return "now"
-	elseif diff < 3600 then
-		return math.floor(diff / 60) .. "m"
-	elseif diff < 86400 then
-		return math.floor(diff / 3600) .. "h"
+local function SavePosition()
+	local point, _, relPoint, x, y = mainFrame:GetPoint()
+	JM.db.framePosition = { point = point, relPoint = relPoint, x = x, y = y }
+end
+
+local function RestorePosition()
+	local pos = JM.db.framePosition
+	mainFrame:ClearAllPoints()
+	if pos then
+		-- 1.0 saved no relPoint (and assumed it matched point).
+		mainFrame:SetPoint(pos.point, UIParent, pos.relPoint or pos.point, pos.x, pos.y)
 	else
-		return math.floor(diff / 86400) .. "d"
+		mainFrame:SetPoint("CENTER")
 	end
 end
 
-local function RefreshSelectionHighlight()
-	for _, row in ipairs(rows) do
-		Skin:StyleRow(row, row.name ~= nil and row.name == selectedName)
+local function ClampListWidth(w)
+	local maxByWindow = mainFrame:GetWidth() - RIGHT_MIN - MARGIN * 2 - DIVIDER_W
+	return math.max(LIST_MIN, math.min(w, LIST_MAX, maxByWindow))
+end
+
+local function ApplyListWidth()
+	listPanel:SetWidth(ClampListWidth(WindowDB().listWidth or LIST_DEFAULT))
+end
+
+--------------------------------------
+--   Header                         --
+--------------------------------------
+
+local function RefreshHeader()
+	if not selectedName then
+		return
+	end
+	local convo = JM.Store:GetConversation(selectedName)
+	local info = JM.PlayerInfo:Get(selectedName, convo)
+	JM.PlayerInfo:SetClassIcon(headerIcon, info.class)
+	headerName:SetText(JM.ClassColor:ColorName(selectedName, info.class))
+	headerDot:SetStatus(info.status)
+	headerStatus:SetText(JM.PlayerInfo:StatusLabel(info.status))
+	headerSub:SetText(JM.PlayerInfo:Describe(info))
+end
+
+--------------------------------------
+--   Right pane state               --
+--------------------------------------
+
+local function ShowRightPane()
+	if settingsPage:IsShown() then
+		return
+	end
+	if selectedName then
+		emptyPane:Hide()
+		threadPane:Show()
+	else
+		threadPane:Hide()
+		emptyPane:Show()
 	end
 end
 
-local function CreateRow(parent)
-	local row = CreateFrame("Button", nil, parent)
-	row:SetSize(ROW_WIDTH, ROW_HEIGHT)
-	Skin:StyleRow(row, false)
-
-	local nameText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	nameText:SetPoint("TOPLEFT", 8, -6)
-	nameText:SetJustifyH("LEFT")
-	row.nameText = nameText
-
-	local timeText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	timeText:SetPoint("TOPRIGHT", -8, -6)
-	timeText:SetTextColor(0.6, 0.6, 0.6)
-	row.timeText = timeText
-
-	local previewText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	previewText:SetPoint("TOPLEFT", 8, -23)
-	previewText:SetPoint("RIGHT", -8, 0)
-	previewText:SetJustifyH("LEFT")
-	previewText:SetTextColor(0.6, 0.6, 0.6)
-	row.previewText = previewText
-
-	local unreadText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	unreadText:SetPoint("BOTTOMRIGHT", -8, 6)
-	unreadText:SetTextColor(1, 1, 1)
-	row.unreadText = unreadText
-
-	row:SetScript("OnClick", function(self)
-		MainFrame:SelectConversation(self.name)
-	end)
-
-	return row
+function MainFrame:ToggleSettings(show)
+	if not mainFrame then
+		BuildFrame()
+	end
+	if show == nil then
+		show = not settingsPage:IsShown()
+	end
+	if show then
+		threadPane:Hide()
+		emptyPane:Hide()
+		settingsPage:Show()
+		settingsBtn.text:SetText("Back")
+	elseif settingsPage:IsShown() then
+		settingsPage:Hide()
+		settingsBtn.text:SetText("Settings")
+		ShowRightPane()
+		self:RefreshMessages(true)
+	else
+		ShowRightPane()
+	end
 end
+
+--------------------------------------
+--   Refresh / selection            --
+--------------------------------------
 
 function MainFrame:RefreshList()
-	local list = JM.Store:GetSortedConversationList()
-
-	for i, entry in ipairs(list) do
-		local row = rows[i]
-		if not row then
-			row = CreateRow(listContent)
-			row:SetPoint("TOPLEFT", listContent, "TOPLEFT", 0, -(i - 1) * ROW_HEIGHT)
-			rows[i] = row
-		end
-
-		row.name = entry.name
-		row.nameText:SetText(JM.ClassColor:ColorName(entry.name, entry.convo.class))
-		row.timeText:SetText(RelativeTime(entry.convo.lastMessageTime))
-
-		local lastMsg = entry.convo.messages[#entry.convo.messages]
-		row.previewText:SetText(lastMsg and TruncateText(lastMsg.msg, 30) or "")
-
-		if (entry.convo.unreadCount or 0) > 0 then
-			row.unreadText:SetText("(" .. entry.convo.unreadCount .. ")")
-		else
-			row.unreadText:SetText("")
-		end
-
-		row:Show()
+	if not mainFrame then
+		return
 	end
-
-	for i = #list + 1, #rows do
-		rows[i].name = nil
-		rows[i]:Hide()
-	end
-
-	listContent:SetHeight(math.max(20, #list * ROW_HEIGHT))
-	RefreshSelectionHighlight()
-
-	if #list == 0 then
-		emptyText:SetText("No conversations yet.\nWhisper someone to get started.")
-		emptyText:Show()
-		msgDisplay:Hide()
-	elseif not selectedName then
-		emptyText:SetText("Select a conversation to start chatting.")
-		emptyText:Show()
-		msgDisplay:Hide()
-	else
-		emptyText:Hide()
-		msgDisplay:Show()
-	end
+	JM.ContactList:Refresh(selectedName)
 end
 
 function MainFrame:RefreshMessages(forceBottom)
-	-- Like WoW's own chat frame: new messages only pull you down if you were
-	-- already caught up. GetScrollOffset()/SetScrollOffset() would be the
-	-- precise way to do this but error as nil methods on this client's
-	-- ScrollingMessageFrame despite being standard Blizzard API - AtBottom()
-	-- is what WIM's own WindowHandler.lua uses instead (proven to exist
-	-- here), so that's the only signal available; there's no way to restore
-	-- an exact prior position after Clear() rebuilds the whole buffer.
-	local wasAtBottom = forceBottom or msgDisplay:AtBottom()
-
-	msgDisplay:Clear()
-
-	if not selectedName then
-		headerName:SetText("")
-		inviteBtn:Hide()
-		scanBtn:Hide()
+	if not mainFrame or not selectedName or not threadPane:IsShown() then
 		return
 	end
+	RefreshHeader()
+	JM.Transcript:Render(selectedName, JM.Store:GetConversation(selectedName), {
+		dividerTime = dividerTime,
+		forceBottom = forceBottom,
+	})
+end
 
-	local convo = JM.Store:GetConversation(selectedName)
-	headerName:SetText(JM.ClassColor:ColorName(selectedName, convo and convo.class))
-	inviteBtn:Show()
-	scanBtn:Show()
-	if not convo then
-		return
+-- Where the "New messages" divider goes when a conversation is opened with
+-- unread messages. 1.0 data has no lastReadTime, so fall back to counting
+-- back unreadCount incoming messages.
+local function ComputeDividerTime(convo)
+	if not convo or (convo.unreadCount or 0) == 0 then
+		return nil
 	end
-
-	local myName = UnitName("player")
-	local myClass = JM.ClassColor:GetMyEnglishClass()
-
-	for _, m in ipairs(convo.messages) do
-		local ts = date("%H:%M", m.time)
+	if convo.lastReadTime then
+		return convo.lastReadTime
+	end
+	local remaining = convo.unreadCount
+	for i = #convo.messages, 1, -1 do
+		local m = convo.messages[i]
 		if m.inbound then
-			msgDisplay:AddMessage(JM.ClassColor:ColorName(selectedName, m.class) .. ": " .. m.msg .. " |cff888888[" .. ts .. "]|r", 1, 1, 1)
-		else
-			-- Your own messages still show your name so the thread reads the
-			-- same way regardless of who sent which line.
-			msgDisplay:AddMessage(JM.ClassColor:ColorName(myName, myClass) .. ": " .. m.msg .. " |cff888888[" .. ts .. "]|r", 0.85, 0.85, 0.85)
+			remaining = remaining - 1
+			if remaining == 0 then
+				return m.time - 1
+			end
 		end
 	end
-
-	if wasAtBottom then
-		msgDisplay:ScrollToBottom()
-	end
-	-- else: leave it where Clear()+AddMessage() naturally settles - no
-	-- SetScrollOffset() available on this client to restore a specific
-	-- prior position (see the note above).
+	return 0
 end
 
 function MainFrame:SelectConversation(name)
 	if not name or name == "" then
 		return
 	end
-	if name ~= selectedName and scanResultText then
+	name = JM.Store.FormatUserName(name)
+	if not mainFrame then
+		BuildFrame()
+	end
+	if name ~= selectedName then
 		scanResultText:SetText("")
+		local convo = JM.Store:GetConversation(name, true)
+		-- Keep a freshly started (still empty) conversation listed this session.
+		convo.keep = true
+		dividerTime = ComputeDividerTime(convo)
 	end
 	selectedName = name
 	JM.Store:MarkRead(name)
 	JM.Minimap:UpdateBadge()
-	self:RefreshMessages(true)
+	JM.Composer:SetConversation(name)
+	self:ToggleSettings(false)
 	self:RefreshList()
+	self:RefreshMessages(true)
+end
+
+function MainFrame:GetSelected()
+	return selectedName
 end
 
 function MainFrame:OnMessageReceived(name)
-	-- The window may never have been opened yet (mainFrame/listContent
-	-- only get built lazily on first Show/Toggle), so there may be
-	-- nothing to refresh - the data is already in JM.Store regardless.
+	-- The window may never have been built yet (it's built lazily on first
+	-- show), so there may be nothing to refresh - the data is already in
+	-- JM.Store regardless.
 	if not mainFrame then
 		return
 	end
-	self:RefreshList()
-	if mainFrame:IsShown() and name == selectedName then
+	if mainFrame:IsShown() and threadPane:IsShown() and name == selectedName then
+		-- They're looking at it, so it's read.
+		JM.Store:MarkRead(name)
+		JM.Minimap:UpdateBadge()
 		self:RefreshMessages()
 	end
+	self:RefreshList()
 end
 
 function MainFrame:HandleIncomingWhisper(name)
-	if mainFrame and mainFrame:IsShown() and selectedName then
+	local shown = mainFrame and mainFrame:IsShown()
+	if shown and selectedName then
 		-- Don't yank focus away from whatever conversation the user is
 		-- actively viewing/typing a reply to - just update the list/badge.
 		self:OnMessageReceived(name)
-	else
+	elseif not shown and JM.Settings:Get("autoOpen") and not InCombatLockdown() then
 		self:Show()
 		self:SelectConversation(name)
+	elseif shown then
+		self:SelectConversation(name)
+	else
+		self:OnMessageReceived(name)
 	end
+end
+
+function MainFrame:OnUnreadChanged(name)
+	if name == selectedName then
+		selectedName = nil
+		JM.Composer:SetConversation(nil)
+		ShowRightPane()
+	end
+	JM.Minimap:UpdateBadge()
+	self:RefreshList()
+end
+
+function MainFrame:OnPresenceChanged()
+	if mainFrame and mainFrame:IsShown() then
+		self:RefreshList()
+		RefreshHeader()
+	end
+end
+
+function MainFrame:RemoveConversation(name)
+	JM.Store:RemoveConversation(name)
+	if name == selectedName then
+		selectedName = nil
+		JM.Composer:SetConversation(nil)
+		ShowRightPane()
+	end
+	JM.Minimap:UpdateBadge()
+	self:RefreshList()
+end
+
+function MainFrame:MarkAllRead()
+	JM.Store:MarkAllRead()
+	dividerTime = nil
+	JM.Minimap:UpdateBadge()
+	self:RefreshList()
+	self:RefreshMessages()
 end
 
 function MainFrame:FocusEditBox()
-	if editBox then
-		editBox:SetFocus()
-	end
+	JM.Composer:Focus()
 end
 
-local function SendCurrentMessage()
-	if not selectedName or not editBox then
+StaticPopupDialogs["JM_NEW_WHISPER"] = {
+	text = "Whisper who?",
+	button1 = ACCEPT or "Accept",
+	button2 = CANCEL or "Cancel",
+	hasEditBox = 1,
+	maxLetters = 48,
+	timeout = 0,
+	whileDead = 1,
+	hideOnEscape = 1,
+	OnAccept = function(self)
+		local edit = _G[self:GetName() .. "EditBox"]
+		local name = edit and string.match(edit:GetText() or "", "^%s*(%S+)")
+		if name then
+			MainFrame:SelectConversation(name)
+			MainFrame:FocusEditBox()
+		end
+	end,
+	EditBoxOnEnterPressed = function(self)
+		local dialog = self:GetParent()
+		StaticPopupDialogs["JM_NEW_WHISPER"].OnAccept(dialog)
+		dialog:Hide()
+	end,
+	EditBoxOnEscapePressed = function(self)
+		self:GetParent():Hide()
+	end,
+}
+
+function MainFrame:PromptNewWhisper()
+	StaticPopup_Show("JM_NEW_WHISPER")
+end
+
+--------------------------------------
+--   Window settings / fade         --
+--------------------------------------
+
+function MainFrame:ApplyWindowSettings()
+	if not mainFrame then
 		return
 	end
-	local text = editBox:GetText()
-	if text and text ~= "" then
-		JM.Whisper:SendWhisper(selectedName, text)
-		editBox:SetText("")
-	end
+	mainFrame:SetScale(JM.Settings:Get("scale") or 1)
+	mainFrame.fadeElapsed = 1 -- re-evaluate alpha on the next frame
 end
 
--- Shift-clicking an item/spell/achievement while this window's reply box has
--- focus should insert the link, exactly like a real chat edit box does.
--- ChatEdit_GetActiveWindow() (Blizzard FrameXML) only scans the standard
--- ChatFrame<N>EditBox globals, so our editBox is invisible to it and
--- ChatEdit_InsertLink silently no-ops while typing here. Hook it and insert
--- into our own box when IT is the one actually focused - hooksecurefunc
--- leaves the original function (and real chat windows) untouched.
-hooksecurefunc("ChatEdit_InsertLink", function(link)
-	if editBox and editBox:IsVisible() and editBox:HasFocus() then
-		editBox:Insert(link)
+-- WhisperMessenger-style: full opacity while hovered or typing, dimmed
+-- otherwise. Polled a few times a second; there's no "mouse left a frame
+-- and all its children" event.
+local function FadeOnUpdate(self, elapsed)
+	self.fadeElapsed = (self.fadeElapsed or 0) + elapsed
+	if self.fadeElapsed < 0.15 then
+		return
 	end
-end)
+	self.fadeElapsed = 0
+	local active = MouseIsOver(self) or JM.Composer:HasFocus() or self.isMoving
+		or (DropDownList1 and DropDownList1:IsShown())
+	self:SetAlpha(active and 1 or (JM.Settings:Get("inactiveAlpha") or 1))
+end
 
-local function BuildFrame()
-	mainFrame = CreateFrame("Frame", "JM_MainFrame", UIParent)
-	mainFrame:SetSize(FRAME_WIDTH, FRAME_HEIGHT)
+--------------------------------------
+--   Build                          --
+--------------------------------------
 
-	local pos = JM.db.framePosition
-	if pos then
-		mainFrame:SetPoint(pos.point, UIParent, pos.point, pos.x, pos.y)
-	else
-		mainFrame:SetPoint("CENTER")
+local function CreateTitleButton(text, width, onClick, tooltip)
+	local btn = Skin:CreateButton(mainFrame, width, 20, text)
+	btn:SetScript("OnClick", onClick)
+	if tooltip then
+		btn:SetScript("OnEnter", function(self)
+			GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+			GameTooltip:AddLine(tooltip)
+			GameTooltip:Show()
+		end)
+		btn:SetScript("OnLeave", function()
+			GameTooltip:Hide()
+		end)
 	end
+	return btn
+end
 
-	mainFrame:SetFrameStrata("DIALOG")
-	mainFrame:SetMovable(true)
-	mainFrame:EnableMouse(true)
-	mainFrame:RegisterForDrag("LeftButton")
-	mainFrame:SetScript("OnDragStart", mainFrame.StartMoving)
-	mainFrame:SetScript("OnDragStop", function(self)
-		self:StopMovingOrSizing()
-		local point, _, _, x, y = self:GetPoint()
-		JM.db.framePosition = { point = point, x = x, y = y }
-	end)
-	Skin:StylePanel(mainFrame, 0.95)
-	mainFrame:Hide()
+local function BuildHeader(parent)
+	headerIcon = parent:CreateTexture(nil, "ARTWORK")
+	headerIcon:SetSize(32, 32)
+	headerIcon:SetPoint("TOPLEFT", 10, -10)
 
-	local title = mainFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
-	title:SetPoint("TOP", 0, -16)
-	title:SetTextColor(1, 1, 1)
-	title:SetText("Messages")
+	headerName = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
+	headerName:SetPoint("TOPLEFT", headerIcon, "TOPRIGHT", 10, 0)
 
-	local close = Skin:CreateButton(mainFrame, 20, 20, "X")
-	close:SetPoint("TOPRIGHT", -4, -4)
-	close:SetScript("OnClick", function() MainFrame:Hide() end)
+	headerDot = Skin:CreateStatusDot(parent, 8)
+	headerDot:SetPoint("LEFT", headerName, "RIGHT", 8, 0)
 
-	-- Left pane: conversation list.
-	local leftPanel = CreateFrame("Frame", nil, mainFrame)
-	leftPanel:SetPoint("TOPLEFT", 16, -48)
-	leftPanel:SetSize(LEFT_PANEL_WIDTH, FRAME_HEIGHT - 64)
-	Skin:StylePanel(leftPanel, 0.6)
+	headerStatus = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	headerStatus:SetPoint("LEFT", headerDot, "RIGHT", 4, 0)
+	headerStatus:SetTextColor(0.7, 0.7, 0.7)
 
-	local listScroll = CreateFrame("ScrollFrame", "JM_ContactScroll", leftPanel, "UIPanelScrollFrameTemplate")
-	listScroll:SetPoint("TOPLEFT", 2, -2)
-	listScroll:SetPoint("BOTTOMRIGHT", -24, 2)
+	headerSub = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	headerSub:SetPoint("BOTTOMLEFT", headerIcon, "BOTTOMRIGHT", 10, 0)
+	headerSub:SetTextColor(0.6, 0.6, 0.6)
 
-	listContent = CreateFrame("Frame", nil, listScroll)
-	listContent:SetSize(ROW_WIDTH, 20)
-	listScroll:SetScrollChild(listContent)
-
-	-- Right pane: header + message thread + reply box.
-	local rightX = 16 + LEFT_PANEL_WIDTH + 16
-
-	headerName = mainFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
-	headerName:SetPoint("TOPLEFT", rightX, -50)
-
-	inviteBtn = Skin:CreateButton(mainFrame, 76, 20, "Invite")
-	inviteBtn:SetPoint("LEFT", headerName, "RIGHT", 10, 0)
+	scanBtn = Skin:CreateButton(parent, 54, 20, "Scan")
+	scanBtn:SetPoint("TOPRIGHT", -10, -10)
+	inviteBtn = Skin:CreateButton(parent, 60, 20, "Invite")
+	inviteBtn:SetPoint("RIGHT", scanBtn, "LEFT", -6, 0)
 	inviteBtn:SetScript("OnClick", function()
 		if selectedName then
 			InviteUnit(selectedName)
 		end
 	end)
-	inviteBtn:Hide()
 
-	scanBtn = Skin:CreateButton(mainFrame, 60, 20, "Scan")
-	scanBtn:SetPoint("LEFT", inviteBtn, "RIGHT", 8, 0)
+	scanResultText = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	scanResultText:SetPoint("TOPRIGHT", scanBtn, "BOTTOMRIGHT", 0, -6)
+	scanResultText:SetTextColor(0.6, 0.6, 0.6)
+
 	scanBtn:SetScript("OnClick", function()
 		if not selectedName or not JM.GearScan then
 			return
@@ -336,82 +389,189 @@ local function BuildFrame()
 				return
 			end
 			local levelText = (result.level and result.level > 0) and tostring(result.level) or "??"
-			local emptyText2 = result.emptySlots > 0 and (", " .. result.emptySlots .. " empty slot" .. (result.emptySlots > 1 and "s" or "")) or ""
+			local emptyText = result.emptySlots > 0 and (", " .. result.emptySlots .. " empty slot" .. (result.emptySlots > 1 and "s" or "")) or ""
 			scanResultText:SetTextColor(1, 1, 1)
-			scanResultText:SetText("Lvl " .. levelText .. "  |  GS ~" .. result.score .. " (approx" .. emptyText2 .. ")")
+			scanResultText:SetText("Lvl " .. levelText .. "  |  GS ~" .. result.score .. " (approx" .. emptyText .. ")")
 		end)
 	end)
-	scanBtn:Hide()
 
-	scanResultText = mainFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	scanResultText:SetPoint("TOPLEFT", rightX, -74)
-	scanResultText:SetTextColor(0.6, 0.6, 0.6)
+	local line = parent:CreateTexture(nil, "ARTWORK")
+	line:SetTexture(Skin.WHITE)
+	line:SetVertexColor(1, 1, 1, 0.08)
+	line:SetHeight(1)
+	line:SetPoint("TOPLEFT", 0, -52)
+	line:SetPoint("TOPRIGHT", 0, -52)
+end
 
-	local msgPanel = CreateFrame("Frame", nil, mainFrame)
-	msgPanel:SetPoint("TOPLEFT", rightX, -94)
-	msgPanel:SetPoint("RIGHT", -16, 0)
-	msgPanel:SetPoint("BOTTOM", mainFrame, "BOTTOM", 0, 56)
-	Skin:StylePanel(msgPanel, 0.6)
-
-	-- ScrollingMessageFrame, not a ScrollFrame+content pair - this is the
-	-- widget WIM's own chat_display uses (Sources/MessageWindows.lua) so
-	-- item/achievement/spell hyperlinks in a message are clickable; it
-	-- manages its own line buffer/wrapping/scrolling natively.
-	msgDisplay = CreateFrame("ScrollingMessageFrame", "JM_MessageDisplay", msgPanel)
-	msgDisplay:SetPoint("TOPLEFT", 8, -8)
-	msgDisplay:SetPoint("BOTTOMRIGHT", -12, 8)
-	msgDisplay:SetFontObject("GameFontHighlightSmall")
-	msgDisplay:SetJustifyH("LEFT")
-	msgDisplay:SetFading(false)
-	msgDisplay:SetMaxLines(200)
-	msgDisplay:EnableMouse(true)
-	msgDisplay:EnableMouseWheel(true)
-	msgDisplay:SetScript("OnMouseWheel", function(self, delta)
-		if delta > 0 then
-			self:ScrollUp()
-		else
-			self:ScrollDown()
-		end
+function BuildFrame()
+	local win = WindowDB()
+	mainFrame = CreateFrame("Frame", "JM_MainFrame", UIParent)
+	mainFrame:SetSize(win.width or DEFAULT_W, win.height or DEFAULT_H)
+	mainFrame:SetFrameStrata("DIALOG")
+	mainFrame:SetToplevel(true)
+	mainFrame:SetClampedToScreen(true)
+	mainFrame:SetMovable(true)
+	mainFrame:SetResizable(true)
+	mainFrame:SetMinResize(MIN_W, MIN_H)
+	mainFrame:SetMaxResize(1600, 1200)
+	mainFrame:EnableMouse(true)
+	mainFrame:RegisterForDrag("LeftButton")
+	mainFrame:SetScript("OnDragStart", function(self)
+		self.isMoving = true
+		self:StartMoving()
 	end)
-	-- Same three scripts + ChatFrame_OnHyperlinkShow dispatcher WIM's
-	-- chat_display uses - it already knows how to open an item tooltip, an
-	-- achievement, a whisper-a-linked-player, etc. without special-casing
-	-- each link type here.
-	msgDisplay:SetScript("OnHyperlinkClick", function(self, link, text, mouseButton)
-		ChatFrame_OnHyperlinkShow(link, text, mouseButton)
+	mainFrame:SetScript("OnDragStop", function(self)
+		self.isMoving = nil
+		self:StopMovingOrSizing()
+		SavePosition()
 	end)
-	msgDisplay:SetScript("OnHyperlinkEnter", function(self, link)
-		GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
-		GameTooltip:SetHyperlink(link)
-		GameTooltip:Show()
+	Skin:StylePanel(mainFrame, 0.95)
+	RestorePosition()
+	mainFrame:Hide()
+	-- Escape closes it, like Blizzard panels.
+	table.insert(UISpecialFrames, "JM_MainFrame")
+
+	-- Title bar.
+	local title = mainFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+	title:SetPoint("TOP", 0, -9)
+	title:SetText("Messages")
+
+	local newBtn = CreateTitleButton("+ New", 50, function()
+		MainFrame:PromptNewWhisper()
+	end, "Start a new whisper")
+	newBtn:SetPoint("TOPLEFT", 6, -5)
+
+	local readBtn = CreateTitleButton("Mark read", 66, function()
+		MainFrame:MarkAllRead()
+	end, "Mark all conversations as read")
+	readBtn:SetPoint("LEFT", newBtn, "RIGHT", 4, 0)
+
+	local close = CreateTitleButton("X", 20, function()
+		MainFrame:Hide()
 	end)
-	msgDisplay:SetScript("OnHyperlinkLeave", function()
-		GameTooltip:Hide()
+	close:SetPoint("TOPRIGHT", -6, -5)
+
+	settingsBtn = CreateTitleButton("Settings", 60, function()
+		MainFrame:ToggleSettings()
+	end)
+	settingsBtn:SetPoint("RIGHT", close, "LEFT", -4, 0)
+
+	-- Left pane.
+	listPanel = CreateFrame("Frame", nil, mainFrame)
+	listPanel:SetPoint("TOPLEFT", MARGIN, -TITLE_H)
+	listPanel:SetPoint("BOTTOMLEFT", MARGIN, MARGIN)
+	Skin:StylePanel(listPanel, 0.6)
+	JM.ContactList:Build(listPanel)
+
+	-- Draggable splitter between the panes.
+	divider = CreateFrame("Button", nil, mainFrame)
+	divider:SetWidth(DIVIDER_W)
+	divider:SetPoint("TOPLEFT", listPanel, "TOPRIGHT", 0, 0)
+	divider:SetPoint("BOTTOMLEFT", listPanel, "BOTTOMRIGHT", 0, 0)
+	local grip = divider:CreateTexture(nil, "HIGHLIGHT")
+	grip:SetTexture(Skin.WHITE)
+	grip:SetVertexColor(1, 1, 1, 0.25)
+	grip:SetPoint("TOP")
+	grip:SetPoint("BOTTOM")
+	grip:SetWidth(2)
+	divider:SetScript("OnMouseDown", function(self)
+		self:SetScript("OnUpdate", function()
+			local x = GetCursorPosition() / mainFrame:GetEffectiveScale()
+			listPanel:SetWidth(ClampListWidth(x - mainFrame:GetLeft() - MARGIN))
+		end)
+	end)
+	divider:SetScript("OnMouseUp", function(self)
+		self:SetScript("OnUpdate", nil)
+		WindowDB().listWidth = math.floor(listPanel:GetWidth() + 0.5)
+		MainFrame:RefreshMessages()
 	end)
 
-	emptyText = mainFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	emptyText:SetPoint("CENTER", msgPanel, "CENTER")
-	emptyText:SetTextColor(0.5, 0.5, 0.5)
-	emptyText:SetJustifyH("CENTER")
+	-- Right pane: thread, empty state, or settings.
+	rightPane = CreateFrame("Frame", nil, mainFrame)
+	rightPane:SetPoint("TOPLEFT", divider, "TOPRIGHT", 0, 0)
+	rightPane:SetPoint("BOTTOMRIGHT", -MARGIN, MARGIN)
+	Skin:StylePanel(rightPane, 0.6)
 
-	local editWidth = FRAME_WIDTH - LEFT_PANEL_WIDTH - 48 - 90
-	local editHolder = Skin:CreateEditBox(mainFrame, editWidth, 28)
-	editHolder:SetPoint("BOTTOMLEFT", rightX, 16)
-	editBox = editHolder.editBox
-	editBox:SetScript("OnEnterPressed", function(self)
-		SendCurrentMessage()
-		self:ClearFocus()
+	threadPane = CreateFrame("Frame", nil, rightPane)
+	threadPane:SetAllPoints()
+	threadPane:Hide()
+	BuildHeader(threadPane)
+
+	local transcriptPanel = CreateFrame("Frame", nil, threadPane)
+	transcriptPanel:SetPoint("TOPLEFT", 0, -54)
+	transcriptPanel:SetPoint("BOTTOMRIGHT", 0, 48)
+	local transcriptScroll = JM.Transcript:Build(transcriptPanel)
+	-- Bubbles wrap to the pane width, which is only known once the window has
+	-- been laid out (and changes while the splitter is dragged).
+	transcriptScroll:SetScript("OnSizeChanged", JM.Timer:Debounce(0.1, function()
+		MainFrame:RefreshMessages()
+	end))
+
+	JM.Composer:Build(threadPane)
+
+	emptyPane = CreateFrame("Frame", nil, rightPane)
+	emptyPane:SetAllPoints()
+	local emptyTitle = emptyPane:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
+	emptyTitle:SetPoint("CENTER", 0, 24)
+	emptyTitle:SetText("Johnny's Messenger")
+	local emptyText = emptyPane:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	emptyText:SetPoint("TOP", emptyTitle, "BOTTOM", 0, -8)
+	emptyText:SetTextColor(0.6, 0.6, 0.6)
+	emptyText:SetText("Pick a conversation on the left, or start a new one.")
+	local emptyBtn = Skin:CreateButton(emptyPane, 130, 24, "Start new whisper")
+	emptyBtn:SetPoint("TOP", emptyText, "BOTTOM", 0, -12)
+	emptyBtn:SetScript("OnClick", function()
+		MainFrame:PromptNewWhisper()
 	end)
 
-	local sendBtn = Skin:CreateButton(mainFrame, 80, 28, "Send")
-	sendBtn:SetPoint("LEFT", editHolder, "RIGHT", 8, 0)
-	sendBtn:SetScript("OnClick", SendCurrentMessage)
+	settingsPage = JM.Settings:BuildPage(rightPane)
 
-	mainFrame:SetScript("OnShow", function()
+	-- Bottom-right resize grip.
+	local resize = CreateFrame("Button", nil, mainFrame)
+	resize:SetSize(12, 12)
+	resize:SetPoint("BOTTOMRIGHT", -1, 1)
+	local resizeTex = resize:CreateTexture(nil, "OVERLAY")
+	resizeTex:SetTexture(Skin.WHITE)
+	resizeTex:SetVertexColor(1, 1, 1, 0.3)
+	resizeTex:SetPoint("BOTTOMRIGHT", -2, 2)
+	resizeTex:SetSize(6, 6)
+	resize:SetScript("OnMouseDown", function()
+		mainFrame.isMoving = true
+		mainFrame:StartSizing("BOTTOMRIGHT")
+	end)
+	resize:SetScript("OnMouseUp", function()
+		mainFrame.isMoving = nil
+		mainFrame:StopMovingOrSizing()
+		win.width = math.floor(mainFrame:GetWidth() + 0.5)
+		win.height = math.floor(mainFrame:GetHeight() + 0.5)
+		SavePosition()
+		ApplyListWidth()
+		MainFrame:RefreshMessages()
+	end)
+
+	-- Re-wrap bubbles while resizing, but at most a few times a second.
+	local relayout = JM.Timer:Debounce(0.1, function()
+		ApplyListWidth()
 		MainFrame:RefreshList()
 		MainFrame:RefreshMessages()
 	end)
+	mainFrame:SetScript("OnSizeChanged", relayout)
+
+	mainFrame:SetScript("OnShow", function()
+		JM.PlayerInfo:RequestGuildRoster()
+		ShowRightPane()
+		MainFrame:RefreshList()
+		MainFrame:RefreshMessages()
+	end)
+	mainFrame:SetScript("OnUpdate", FadeOnUpdate)
+
+	ApplyListWidth()
+	MainFrame:ApplyWindowSettings()
 end
+
+--------------------------------------
+--   Show / hide / combat           --
+--------------------------------------
 
 function MainFrame:Toggle()
 	if not mainFrame then
@@ -436,3 +596,20 @@ function MainFrame:Hide()
 		mainFrame:Hide()
 	end
 end
+
+local combatFrame = CreateFrame("Frame")
+combatFrame:RegisterEvent("PLAYER_REGEN_DISABLED")
+combatFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+combatFrame:SetScript("OnEvent", function(self, event)
+	if not mainFrame or not JM.db or not JM.Settings:Get("hideInCombat") then
+		hiddenByCombat = nil
+		return
+	end
+	if event == "PLAYER_REGEN_DISABLED" and mainFrame:IsShown() then
+		hiddenByCombat = true
+		mainFrame:Hide()
+	elseif event == "PLAYER_REGEN_ENABLED" and hiddenByCombat then
+		hiddenByCombat = nil
+		mainFrame:Show()
+	end
+end)

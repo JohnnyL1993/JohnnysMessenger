@@ -1,5 +1,5 @@
 -- Shared addon namespace. Every module hangs its own table off this
--- (JM.Skin, JM.Store, JM.Whisper, JM.MainFrame, JM.Minimap).
+-- (JM.Skin, JM.Settings, JM.Store, JM.Whisper, JM.MainFrame, JM.Minimap, ...).
 JM = {}
 JM.ADDON_NAME = "JohnnysMessenger"
 
@@ -26,10 +26,12 @@ eventFrame:SetScript("OnEvent", function(self, event, arg1)
 		end
 		ApplyDefaults(JohnnysMessengerDB, defaults)
 		JM.db = JohnnysMessengerDB
+		JM.Settings:Init()
 	elseif event == "PLAYER_LOGIN" then
 		-- Player name/realm aren't reliably available until login, so the
 		-- data store, whisper capture and minimap icon all init here.
 		JM.Store:Init()
+		JM.PlayerInfo:Init()
 		JM.Whisper:Init()
 		JM.Minimap:Init()
 	end

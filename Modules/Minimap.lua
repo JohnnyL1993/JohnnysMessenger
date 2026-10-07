@@ -37,9 +37,28 @@ function Minimap:Init()
 	label:SetTextColor(1, 1, 1)
 	label:SetText("M")
 
-	button.badge = button:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	button.badge:SetPoint("BOTTOMRIGHT", 3, -3)
-	button.badge:SetTextColor(1, 1, 1)
+	button.badge = JM.Skin:CreateBadge(button)
+	button.badge:SetPoint("CENTER", button, "BOTTOMRIGHT", 0, 0)
+	button.badge:SetFrameLevel(button:GetFrameLevel() + 2)
+
+	-- Soft white pulse while anything is unread (WhisperMessenger's widget
+	-- glow, done with a 3.3-era Alpha animation on a child frame).
+	local pulse = CreateFrame("Frame", nil, button)
+	pulse:SetAllPoints()
+	pulse:SetFrameLevel(button:GetFrameLevel() + 1)
+	local glow = pulse:CreateTexture(nil, "OVERLAY")
+	glow:SetTexture(JM.Skin.WHITE)
+	glow:SetAllPoints()
+	glow:SetVertexColor(1, 1, 1, 0.35)
+	pulse:Hide()
+	local anim = pulse:CreateAnimationGroup()
+	anim:SetLooping("BOUNCE")
+	local fade = anim:CreateAnimation("Alpha")
+	fade:SetChange(-1)
+	fade:SetDuration(0.9)
+	fade:SetSmoothing("IN_OUT")
+	button.pulse = pulse
+	button.pulseAnim = anim
 
 	button:RegisterForDrag("LeftButton")
 	button:SetScript("OnDragStart", function(self)
@@ -54,7 +73,14 @@ function Minimap:Init()
 	button:SetScript("OnEnter", function(self)
 		GameTooltip:SetOwner(self, "ANCHOR_LEFT")
 		GameTooltip:AddLine("Johnny's Messenger")
-		GameTooltip:AddLine("Click to toggle | Drag to move", 0.7, 0.7, 0.7)
+		local total = JM.Store:GetTotalUnread()
+		if total > 0 then
+			GameTooltip:AddLine(total .. " unread", 1, 1, 1)
+			for _, entry in ipairs(JM.Store:GetUnreadNames(3)) do
+				GameTooltip:AddDoubleLine(JM.ClassColor:ColorName(entry.name, entry.convo.class), entry.convo.unreadCount, 1, 1, 1, 0.8, 0.8, 0.8)
+			end
+		end
+		GameTooltip:AddLine("Click to toggle  -  Drag to move", 0.7, 0.7, 0.7)
 		GameTooltip:Show()
 	end)
 	button:SetScript("OnLeave", function()
@@ -70,9 +96,14 @@ function Minimap:UpdateBadge()
 		return
 	end
 	local total = JM.Store:GetTotalUnread()
+	button.badge:SetCount(total)
 	if total > 0 then
-		button.badge:SetText(total > 99 and "99+" or tostring(total))
+		if not button.pulse:IsShown() then
+			button.pulse:Show()
+			button.pulseAnim:Play()
+		end
 	else
-		button.badge:SetText("")
+		button.pulseAnim:Stop()
+		button.pulse:Hide()
 	end
 end
