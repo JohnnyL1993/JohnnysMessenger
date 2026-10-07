@@ -18,7 +18,7 @@ local MARGIN = 10
 local DIVIDER_W = 6
 
 local mainFrame, listPanel, divider, rightPane, threadPane, settingsPage, emptyPane
-local headerIcon, headerName, headerDot, headerStatus, headerSub, inviteBtn, scanBtn, scanResultText
+local headerIcon, headerName, headerDot, headerStatus, headerSub, inviteBtn
 local settingsBtn
 local selectedName, dividerTime
 local hiddenByCombat
@@ -168,7 +168,6 @@ function MainFrame:SelectConversation(name)
 		BuildFrame()
 	end
 	if name ~= selectedName then
-		scanResultText:SetText("")
 		local convo = JM.Store:GetConversation(name, true)
 		-- Keep a freshly started (still empty) conversation listed this session.
 		convo.keep = true
@@ -355,44 +354,12 @@ local function BuildHeader(parent)
 	headerSub:SetPoint("BOTTOMLEFT", headerIcon, "BOTTOMRIGHT", 10, 0)
 	headerSub:SetTextColor(0.6, 0.6, 0.6)
 
-	scanBtn = Skin:CreateButton(parent, 54, 20, "Scan")
-	scanBtn:SetPoint("TOPRIGHT", -10, -10)
 	inviteBtn = Skin:CreateButton(parent, 60, 20, "Invite")
-	inviteBtn:SetPoint("RIGHT", scanBtn, "LEFT", -6, 0)
+	inviteBtn:SetPoint("TOPRIGHT", -10, -10)
 	inviteBtn:SetScript("OnClick", function()
 		if selectedName then
 			InviteUnit(selectedName)
 		end
-	end)
-
-	scanResultText = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	scanResultText:SetPoint("TOPRIGHT", scanBtn, "BOTTOMRIGHT", 0, -6)
-	scanResultText:SetTextColor(0.6, 0.6, 0.6)
-
-	scanBtn:SetScript("OnClick", function()
-		if not selectedName or not JM.GearScan then
-			return
-		end
-		local target = selectedName
-		scanResultText:SetTextColor(0.6, 0.6, 0.6)
-		scanResultText:SetText("Scanning...")
-		JM.GearScan:Scan(target, function(result)
-			-- The player may have switched conversations while the scan
-			-- (up to a few seconds) was in flight - drop stale results.
-			if selectedName ~= target then
-				return
-			end
-			if not result.ok then
-				-- Out of range / no response - just clear back to blank
-				-- rather than showing an error.
-				scanResultText:SetText("")
-				return
-			end
-			local levelText = (result.level and result.level > 0) and tostring(result.level) or "??"
-			local emptyText = result.emptySlots > 0 and (", " .. result.emptySlots .. " empty slot" .. (result.emptySlots > 1 and "s" or "")) or ""
-			scanResultText:SetTextColor(1, 1, 1)
-			scanResultText:SetText("Lvl " .. levelText .. "  |  GS ~" .. result.score .. " (approx" .. emptyText .. ")")
-		end)
 	end)
 
 	local line = parent:CreateTexture(nil, "ARTWORK")
@@ -435,6 +402,8 @@ function BuildFrame()
 	local title = mainFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
 	title:SetPoint("TOP", 0, -9)
 	title:SetText("Messages")
+	-- Swaps in for the title when a newer version has been seen.
+	JM.VersionCheck:AttachNotice(mainFrame, title)
 
 	local newBtn = CreateTitleButton("+ New", 50, function()
 		MainFrame:PromptNewWhisper()

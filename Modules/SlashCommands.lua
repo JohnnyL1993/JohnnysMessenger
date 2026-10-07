@@ -15,11 +15,14 @@ SlashCmdList["JOHNNYSMESSENGER"] = function(msg)
 		else
 			print("|cffffffffJohnny's Messenger:|r nobody has whispered you yet.")
 		end
+	elseif cmd == "version" or cmd == "ver" then
+		JM.VersionCheck:PrintStatus()
 	elseif cmd == "help" then
 		print("|cffffffffJohnny's Messenger|r commands:")
 		print("  /jm - toggle the window")
 		print("  /jm reply - open the last person who whispered you")
 		print("  /jm settings - open settings")
+		print("  /jm version - check for a newer version")
 	else
 		JM.MainFrame:Toggle()
 	end

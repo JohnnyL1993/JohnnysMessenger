@@ -23,6 +23,7 @@ Teams-style whisper messenger. Left pane lists your conversations, right pane sh
   - Quick replies
 - **Minimap button** with an unread count, a pulse while anything is unread, and the top unread senders in its tooltip.
 - **Keybindings** under Key Bindings > AddOns: toggle the window, reply to the last whisper.
+- **Update notice**: when another player is running a newer version, a gold "Update available" notice replaces the window title. Click it for a copyable link to the Releases page.
 
 ## Requirements
 
@@ -46,6 +47,7 @@ Download the latest release zip, delete the old `JohnnysMessenger` folder, and e
 | `/jm` or `/messenger` | Toggle the messenger window |
 | `/jm reply` | Open the last person who whispered you |
 | `/jm settings` | Open settings |
+| `/jm version` | Show your version and whether a newer one has been seen |
 | `/jm help` | List commands |
 
 ## Other Johnny's addons
