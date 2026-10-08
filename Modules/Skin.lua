@@ -1,10 +1,83 @@
 -- Flat black/white "modern" skin, ported from JohnnysAddonHub's Modules\Skin.lua
--- so this addon looks like part of the same suite. Single tinted 1x1 texture,
--- no custom art or external skinning library.
+-- so this addon looks like part of the same suite. Tinted flat textures plus
+-- one white circle for rounded corners; no external skinning library.
 JM.Skin = {}
 local Skin = JM.Skin
 
 Skin.WHITE = "Interface\\Buttons\\WHITE8X8"
+Skin.CIRCLE = "Interface\\AddOns\\JohnnysMessenger\\Media\\Circle"
+
+local function RoundedSetColor(bg, r, g, b, a)
+	for _, tex in ipairs(bg.textures) do
+		tex:SetVertexColor(r, g, b, a)
+	end
+end
+
+-- A rounded-rectangle background (3.3.5a has no corner masks): the four
+-- quarters of Media\Circle as corners, plus three flat strips filling the
+-- rest. Pieces never overlap, so a translucent color stays even. The frame
+-- must be at least 2 * radius in each direction. Tint with bg:SetColor().
+function Skin:CreateRoundedBackground(frame, radius, layer)
+	layer = layer or "BACKGROUND"
+	local function Piece(file)
+		local tex = frame:CreateTexture(nil, layer)
+		tex:SetTexture(file)
+		return tex
+	end
+
+	local textures = {}
+	local tl, tr, bl, br = Piece(), Piece(), Piece(), Piece()
+	-- SetTexture returns nil when the file can't be loaded - e.g. the client
+	-- was only /reloaded after the addon gained Media\Circle.tga, since WoW
+	-- only sees new files after a restart.
+	local haveCircle = tl:SetTexture(self.CIRCLE)
+	for _, corner in ipairs({ tl, tr, bl, br }) do
+		corner:SetSize(radius, radius)
+		if haveCircle then
+			corner:SetTexture(self.CIRCLE)
+			table.insert(textures, corner)
+		else
+			corner:SetTexture(nil)
+		end
+	end
+	tl:SetTexCoord(0, 0.5, 0, 0.5)
+	tr:SetTexCoord(0.5, 1, 0, 0.5)
+	bl:SetTexCoord(0, 0.5, 0.5, 1)
+	br:SetTexCoord(0.5, 1, 0.5, 1)
+	tl:SetPoint("TOPLEFT")
+	tr:SetPoint("TOPRIGHT")
+	bl:SetPoint("BOTTOMLEFT")
+	br:SetPoint("BOTTOMRIGHT")
+
+	if not haveCircle then
+		-- Fallback: draw each corner's quarter circle as 1px-tall rows.
+		for k = 0, radius - 1 do
+			local dy = radius - k - 0.5
+			local w = math.floor(math.sqrt(radius * radius - dy * dy) + 0.5)
+			if w > 0 then
+				for _, c in ipairs({ { tl, "TOPRIGHT", -k }, { tr, "TOPLEFT", -k }, { bl, "BOTTOMRIGHT", k }, { br, "BOTTOMLEFT", k } }) do
+					local row = Piece(self.WHITE)
+					row:SetSize(w, 1)
+					row:SetPoint(c[2], c[1], c[2], 0, c[3])
+					table.insert(textures, row)
+				end
+			end
+		end
+	end
+
+	local top, bottom, middle = Piece(self.WHITE), Piece(self.WHITE), Piece(self.WHITE)
+	top:SetPoint("TOPLEFT", tl, "TOPRIGHT")
+	top:SetPoint("BOTTOMRIGHT", tr, "BOTTOMLEFT")
+	bottom:SetPoint("TOPLEFT", bl, "TOPRIGHT")
+	bottom:SetPoint("BOTTOMRIGHT", br, "BOTTOMLEFT")
+	middle:SetPoint("TOPLEFT", tl, "BOTTOMLEFT")
+	middle:SetPoint("BOTTOMRIGHT", br, "TOPRIGHT")
+	table.insert(textures, top)
+	table.insert(textures, bottom)
+	table.insert(textures, middle)
+
+	return { textures = textures, SetColor = RoundedSetColor }
+end
 
 function Skin:StylePanel(frame, alpha)
 	frame:SetBackdrop({ bgFile = self.WHITE, edgeFile = self.WHITE, edgeSize = 1 })

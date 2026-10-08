@@ -2,16 +2,17 @@
 -- left, yours on the right, consecutive messages grouped under one sender
 -- label, with date separators and a "New messages" divider.
 --
--- Each bubble's text lives in its own small ScrollingMessageFrame rather than
--- a FontString. On this client only SMF reliably delivers OnHyperlinkClick
--- for item/spell/achievement links (SimpleHTML silently failed to parse them -
--- see the 1.0 notes), so bubbles keep links clickable. A hidden FontString
--- measures each message first so the SMF can be sized to fit it exactly.
+-- Plain-text bubbles use a FontString. Bubbles containing links put their
+-- text in a small ScrollingMessageFrame instead: on this client only SMF
+-- reliably delivers OnHyperlinkClick for item/spell/achievement links
+-- (SimpleHTML silently failed to parse them - see the 1.0 notes). A hidden
+-- FontString measures each message first so the bubble fits it exactly.
 JM.Transcript = {}
 local Transcript = JM.Transcript
 local Skin = JM.Skin
 
 local PAD_X, PAD_Y = 10, 6 -- text padding inside a bubble
+local RADIUS = 8 -- bubble corner radius
 local SIDE = 10 -- gap between bubbles and the pane edge
 local GAP_IN_GROUP, GAP_GROUP = 3, 10
 local GROUP_WINDOW = 120 -- seconds; WhisperMessenger's grouping threshold
@@ -149,7 +150,7 @@ local function AcquireBubble()
 	local b = bubblePool[used.bubble]
 	if not b then
 		b = CreateFrame("Frame", nil, content)
-		b:SetBackdrop({ bgFile = Skin.WHITE })
+		b.bg = Skin:CreateRoundedBackground(b, RADIUS)
 
 		local smf = CreateFrame("ScrollingMessageFrame", nil, b)
 		smf:SetPoint("TOPLEFT", PAD_X, -PAD_Y)
@@ -157,6 +158,11 @@ local function AcquireBubble()
 		smf:SetJustifyH("LEFT")
 		smf:SetFading(false)
 		smf:SetMaxLines(8)
+		-- Fill from the top so the extra height Render gives the SMF hangs
+		-- below the text instead of pushing it down.
+		if smf.SetInsertMode then
+			smf:SetInsertMode("TOP")
+		end
 		if smf.SetIndentedWordWrap then
 			smf:SetIndentedWordWrap(false)
 		end
@@ -164,12 +170,25 @@ local function AcquireBubble()
 		smf:SetScript("OnHyperlinkClick", OnHyperlinkClick)
 		smf:SetScript("OnHyperlinkEnter", OnHyperlinkEnter)
 		smf:SetScript("OnHyperlinkLeave", OnHyperlinkLeave)
-		smf:SetScript("OnMouseUp", function(self, button)
+		local function OnMouseUp(self, button)
 			if button == "RightButton" then
 				ShowBubbleMenu(b)
 			end
-		end)
+		end
+		smf:SetScript("OnMouseUp", OnMouseUp)
 		b.smf = smf
+
+		-- Plain-text messages use an ordinary FontString instead: an SMF
+		-- occasionally drew nothing at all, and only links need the SMF.
+		local fs = b:CreateFontString(nil, "OVERLAY")
+		fs:SetFontObject(JM_MessageFont)
+		fs:SetPoint("TOPLEFT", PAD_X, -PAD_Y)
+		fs:SetJustifyH("LEFT")
+		fs:SetJustifyV("TOP")
+		fs:SetTextColor(1, 1, 1)
+		b.fs = fs
+		b:EnableMouse(true)
+		b:SetScript("OnMouseUp", OnMouseUp)
 		bubblePool[used.bubble] = b
 	end
 	b:ClearAllPoints()
@@ -378,19 +397,42 @@ function Transcript:Render(name, convo, opts)
 			local textW, textH = Measure(text, maxInner)
 			local b = AcquireBubble()
 			b.rawText = m.msg
-			-- A little slack so the SMF never wraps one line earlier than the
-			-- measuring FontString did (which would clip the top line).
-			b.smf:SetSize(textW + 4, textH + 2)
 			b:SetSize(textW + 4 + PAD_X * 2, textH + 2 + PAD_Y * 2)
 			local bg = m.inbound and INCOMING_BG or OUTGOING_BG
-			b:SetBackdropColor(bg[1], bg[2], bg[3], bg[4])
+			b.bg:SetColor(bg[1], bg[2], bg[3], bg[4])
 			if m.inbound then
 				b:SetPoint("TOPLEFT", SIDE, -y)
 			else
 				b:SetPoint("TOPRIGHT", -SIDE, -y)
 			end
 			b.smf:Clear()
-			b.smf:AddMessage(text, 1, 1, 1)
+			if string.find(text, "|H", 1, true) then
+				b.fs:Hide()
+				b.smf:Show()
+				-- Width slack so the SMF never wraps earlier than the measuring
+				-- FontString did. Height slack of a whole line because an SMF
+				-- drops any line that doesn't fully fit.
+				local _, fontH = JM_MessageFont:GetFont()
+				local slack = math.ceil(fontH or 12) + 2
+				b.smf:SetSize(textW + 4, textH + 2 + slack)
+				-- Keep the invisible overhang from eating clicks on the next bubble.
+				b.smf:SetHitRectInsets(0, 0, 0, slack)
+				b.smf:AddMessage(text, 1, 1, 1)
+				-- Add it again next frame in case the SMF hadn't laid itself out
+				-- yet and dropped the first copy.
+				local smf = b.smf
+				JM.Timer:After(0, function()
+					if smf:IsVisible() and b.rawText == m.msg then
+						smf:Clear()
+						smf:AddMessage(text, 1, 1, 1)
+					end
+				end)
+			else
+				b.smf:Hide()
+				b.fs:Show()
+				b.fs:SetWidth(textW + 4)
+				b.fs:SetText(text)
+			end
 			y = y + b:GetHeight()
 			prev = m
 		end
