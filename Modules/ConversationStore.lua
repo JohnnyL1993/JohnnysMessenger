@@ -154,11 +154,66 @@ function Store:MarkUnread(name)
 	convo.lastReadTime = (firstTime or time()) - 1
 end
 
-function Store:RemoveConversation(name)
+-- Removed conversations are kept for a moment in Store.lastRemoved
+-- ({ at = GetTime(), items = { { name, convo }, ... } }) so the window can
+-- offer Undo - removing drops the whole history. `append` adds to the batch
+-- already being built (see RemoveSentOnly) instead of starting a new one.
+function Store:RemoveConversation(name, append)
 	name = Store.FormatUserName(name)
-	if name then
+	if name and self.conversations[name] then
+		if not append or not self.lastRemoved then
+			self.lastRemoved = { at = GetTime(), items = {} }
+		end
+		table.insert(self.lastRemoved.items, { name = name, convo = self.conversations[name] })
 		self.conversations[name] = nil
 	end
+end
+
+-- Puts back whatever the last remove (single or batch) took out, unless a
+-- new conversation with that player has started since. Returns how many.
+function Store:UndoRemove()
+	local last = self.lastRemoved
+	self.lastRemoved = nil
+	local restored = 0
+	if last then
+		for _, item in ipairs(last.items) do
+			if not self.conversations[item.name] then
+				self.conversations[item.name] = item.convo
+				restored = restored + 1
+			end
+		end
+	end
+	return restored
+end
+
+-- True for a conversation in which only you have spoken: at least one
+-- message, none of them from the other player. Pinned conversations and ones
+-- with a draft in progress never count, so they stay in the main list.
+function Store:IsSentOnly(convo)
+	if not convo or convo.pinned or #convo.messages == 0 or (convo.draft and convo.draft ~= "") then
+		return false
+	end
+	for _, m in ipairs(convo.messages) do
+		if m.inbound then
+			return false
+		end
+	end
+	return true
+end
+
+-- Removes every sent-only conversation as one undoable batch. Returns how many.
+function Store:RemoveSentOnly()
+	local names = {}
+	for name, convo in pairs(self.conversations) do
+		if self:IsSentOnly(convo) then
+			table.insert(names, name)
+		end
+	end
+	self.lastRemoved = { at = GetTime(), items = {} }
+	for _, name in ipairs(names) do
+		self:RemoveConversation(name, true)
+	end
+	return #names
 end
 
 function Store:GetTotalUnread()

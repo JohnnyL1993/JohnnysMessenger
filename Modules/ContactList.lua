@@ -1,5 +1,6 @@
--- Left pane: search box + conversation rows (pooled rows in a scrollframe,
--- the same list pattern as 1.0). Row layout follows WhisperMessenger: class
+-- Left pane: search box, All / Unread tabs, and conversation rows (pooled
+-- rows in a scrollframe, the same list pattern as 1.0). Conversations where
+-- only you have spoken are folded under a "Sent requests" row. Row layout follows WhisperMessenger: class
 -- icon with a presence dot, class-colored name, relative time, a preview
 -- line (or "Draft: ..."), and an unread badge; pinned rows sort first.
 JM.ContactList = {}
@@ -8,10 +9,17 @@ local Skin = JM.Skin
 
 local ROW_HEIGHT = 46
 local ICON_SIZE = 28
+local GROUP_HEIGHT = 24
+-- How long the "Removed X - Undo" bar stays up.
+local UNDO_SECONDS = 10
 
 local listScroll, listContent, searchHolder, emptyText, newBtn
+local allTab, unreadTab, groupRow, groupClear, undoBar
 local rows = {}
 local filter = ""
+-- "all" (the default: real conversations, then unanswered sent requests
+-- folded under one row) or "unread".
+local view = "all"
 
 --------------------------------------
 --   Formatting                     --
@@ -169,11 +177,43 @@ local function CreateRow(parent)
 	badge:SetPoint("BOTTOMRIGHT", -8, 7)
 	row.badge = badge
 
+	-- Pin and Remove, shown on the selected row only - the same two actions
+	-- as the right-click menu, where they were easy to miss.
+	local removeBtn = Skin:CreateButton(row, 18, 15, "X")
+	removeBtn:SetPoint("BOTTOMRIGHT", -6, 6)
+	removeBtn:SetScript("OnClick", function()
+		if row.name then
+			JM.MainFrame:RemoveConversation(row.name)
+		end
+	end)
+	removeBtn:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		GameTooltip:AddLine("Remove conversation", 1, 1, 1)
+		GameTooltip:AddLine("Deletes its history. You get a few seconds to undo.", nil, nil, nil, true)
+		GameTooltip:Show()
+	end)
+	removeBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	removeBtn:Hide()
+	row.removeBtn = removeBtn
+
+	local pinBtn = Skin:CreateButton(row, 40, 15, "Pin")
+	pinBtn:SetPoint("RIGHT", removeBtn, "LEFT", -2, 0)
+	pinBtn:SetScript("OnClick", function()
+		local convo = row.name and JM.Store:GetConversation(row.name)
+		if convo then
+			convo.pinned = not convo.pinned or nil
+			JM.MainFrame:RefreshList()
+		end
+	end)
+	pinBtn:Hide()
+	row.pinBtn = pinBtn
+
 	local previewText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	previewText:SetPoint("BOTTOMLEFT", icon, "BOTTOMRIGHT", 8, 1)
-	previewText:SetPoint("RIGHT", badge, "LEFT", -4, 0)
 	previewText:SetJustifyH("LEFT")
 	previewText:SetHeight(12)
+	if previewText.SetWordWrap then
+		previewText:SetWordWrap(false)
+	end
 	row.previewText = previewText
 
 	row:SetScript("OnClick", function(self, button)
@@ -194,6 +234,7 @@ end
 local function FillRow(row, entry, selectedName)
 	local convo = entry.convo
 	local info = JM.PlayerInfo:Get(entry.name, convo)
+	local selected = (entry.name == selectedName)
 	row.name = entry.name
 	row.pinned = convo.pinned
 
@@ -219,13 +260,35 @@ local function FillRow(row, entry, selectedName)
 	if convo.muted then
 		preview = "(muted) " .. (preview or "")
 	end
-	row.previewText:SetText(Truncate(preview or "", 60))
+	row.previewText:SetText(Truncate(preview or "", 120))
 	row.previewText:SetTextColor(0.6, 0.6, 0.6)
 
+	local unread = (convo.unreadCount or 0) > 0
 	row.badge:SetCount(convo.unreadCount)
 	-- Unread rows get a brighter preview so they stand out without color.
-	if (convo.unreadCount or 0) > 0 then
+	if unread then
 		row.previewText:SetTextColor(0.9, 0.9, 0.9)
+	end
+
+	if selected then
+		row.pinBtn.text:SetText(convo.pinned and "Unpin" or "Pin")
+		row.pinBtn:Show()
+		row.removeBtn:Show()
+	else
+		row.pinBtn:Hide()
+		row.removeBtn:Hide()
+	end
+
+	-- The preview runs to the row's edge unless something sits there: the
+	-- selected row's buttons, or an unread badge.
+	row.previewText:ClearAllPoints()
+	row.previewText:SetPoint("BOTTOMLEFT", row.icon, "BOTTOMRIGHT", 8, 1)
+	if selected then
+		row.previewText:SetPoint("RIGHT", row.pinBtn, "LEFT", -4, 0)
+	elseif unread then
+		row.previewText:SetPoint("RIGHT", row.badge, "LEFT", -4, 0)
+	else
+		row.previewText:SetPoint("RIGHT", row, "RIGHT", -8, 0)
 	end
 end
 
@@ -233,7 +296,27 @@ end
 --   Build / refresh                --
 --------------------------------------
 
+local function PaintTab(btn, on)
+	local C = Skin.C
+	if on then
+		btn:SetBackdropColor(0.122, 0.153, 0.169, 0.95)
+		btn:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
+		btn.text:SetTextColor(C.text[1], C.text[2], C.text[3])
+	else
+		btn:SetBackdropColor(C.panel[1], C.panel[2], C.panel[3], 0.95)
+		btn:SetBackdropBorderColor(C.rule2[1], C.rule2[2], C.rule2[3], 1)
+		btn.text:SetTextColor(C.muted[1], C.muted[2], C.muted[3])
+	end
+end
+
+local function WindowDB()
+	JM.db.window = JM.db.window or {}
+	return JM.db.window
+end
+
 function ContactList:Build(parent)
+	local C = Skin.C
+
 	searchHolder = Skin:CreateEditBox(parent, 100, 22)
 	searchHolder:SetPoint("TOPLEFT", 6, -6)
 	searchHolder:SetPoint("TOPRIGHT", -6, -6)
@@ -245,9 +328,27 @@ function ContactList:Build(parent)
 	searchHolder.editBox:SetScript("OnEnterPressed", searchHolder.editBox.ClearFocus)
 	searchHolder.UpdatePlaceholder()
 
+	-- All / Unread.
+	allTab = Skin:CreateButton(parent, 50, 20, "All")
+	allTab:SetPoint("TOPLEFT", 6, -32)
+	allTab:SetScript("OnClick", function()
+		view = "all"
+		JM.MainFrame:RefreshList()
+	end)
+	allTab:SetScript("OnMouseUp", function(self) PaintTab(self, view == "all") end)
+
+	unreadTab = Skin:CreateButton(parent, 90, 20, "Unread")
+	unreadTab:SetPoint("LEFT", allTab, "RIGHT", 2, 0)
+	unreadTab:SetScript("OnClick", function()
+		view = "unread"
+		JM.MainFrame:RefreshList()
+	end)
+	unreadTab:SetScript("OnMouseUp", function(self) PaintTab(self, view == "unread") end)
+
 	listScroll = CreateFrame("ScrollFrame", "JM_ContactScroll", parent, "UIPanelScrollFrameTemplate")
-	listScroll:SetPoint("TOPLEFT", 2, -34)
+	listScroll:SetPoint("TOPLEFT", 2, -58)
 	listScroll:SetPoint("BOTTOMRIGHT", -24, 2)
+	Skin:StyleScrollBar(listScroll)
 
 	listContent = CreateFrame("Frame", nil, listScroll)
 	listContent:SetSize(100, 20)
@@ -256,8 +357,49 @@ function ContactList:Build(parent)
 		listContent:SetWidth(w)
 	end)
 
+	-- "Sent requests (9)": conversations where only you have spoken (join
+	-- whispers nobody answered, mostly), folded away under one row so they
+	-- don't bury real conversations. Click to expand; Clear removes them all.
+	groupRow = CreateFrame("Button", nil, listContent)
+	groupRow:SetHeight(GROUP_HEIGHT)
+	local groupBg = groupRow:CreateTexture(nil, "BACKGROUND")
+	groupBg:SetAllPoints()
+	groupBg:SetTexture(Skin.WHITE)
+	groupBg:SetVertexColor(C.panel[1], C.panel[2], C.panel[3], 1)
+	local groupHl = groupRow:CreateTexture(nil, "HIGHLIGHT")
+	groupHl:SetAllPoints()
+	groupHl:SetTexture(Skin.WHITE)
+	groupHl:SetVertexColor(1, 1, 1, 0.06)
+	groupRow.text = Skin:Heading(groupRow, 11, C.muted)
+	groupRow.text:SetPoint("LEFT", 10, 0)
+	groupRow:SetScript("OnClick", function()
+		WindowDB().sentExpanded = not WindowDB().sentExpanded or nil
+		JM.MainFrame:RefreshList()
+	end)
+	groupRow:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		GameTooltip:AddLine("Sent requests", 1, 1, 1)
+		GameTooltip:AddLine("Whispers you sent that were never answered. They move back into the main list as soon as the other player replies.", nil, nil, nil, true)
+		GameTooltip:Show()
+	end)
+	groupRow:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	groupRow:Hide()
+
+	groupClear = Skin:CreateButton(groupRow, 44, 16, "Clear")
+	groupClear:SetPoint("RIGHT", -6, 0)
+	groupClear:SetScript("OnClick", function()
+		JM.MainFrame:RemoveSentRequests()
+	end)
+	groupClear:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		GameTooltip:AddLine("Clear sent requests", 1, 1, 1)
+		GameTooltip:AddLine("Removes every unanswered conversation in this group. You get a few seconds to undo.", nil, nil, nil, true)
+		GameTooltip:Show()
+	end)
+	groupClear:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
 	emptyText = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	emptyText:SetPoint("TOP", 0, -60)
+	emptyText:SetPoint("TOP", 0, -84)
 	emptyText:SetPoint("LEFT", 10, 0)
 	emptyText:SetPoint("RIGHT", -10, 0)
 	emptyText:SetTextColor(0.5, 0.5, 0.5)
@@ -268,6 +410,34 @@ function ContactList:Build(parent)
 		JM.MainFrame:PromptNewWhisper()
 	end)
 	newBtn:Hide()
+
+	-- Undo bar: over the bottom of the list for a few seconds after a remove.
+	undoBar = CreateFrame("Frame", nil, parent)
+	undoBar:SetPoint("BOTTOMLEFT", 2, 2)
+	undoBar:SetPoint("BOTTOMRIGHT", -2, 2)
+	undoBar:SetHeight(26)
+	undoBar:SetFrameLevel(listScroll:GetFrameLevel() + 20)
+	Skin:StylePanel(undoBar, 1)
+	undoBar:SetBackdropColor(0.122, 0.153, 0.169, 1)
+	undoBar:SetBackdropBorderColor(C.accent[1], C.accent[2], C.accent[3], 1)
+	undoBar:EnableMouse(true)
+	undoBar:Hide()
+	undoBar.text = undoBar:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	undoBar.text:SetPoint("LEFT", 8, 0)
+	undoBar.text:SetPoint("RIGHT", -64, 0)
+	undoBar.text:SetJustifyH("LEFT")
+	undoBar.text:SetHeight(12)
+	local undoBtn = Skin:CreateButton(undoBar, 52, 18, "Undo")
+	undoBtn:SetPoint("RIGHT", -4, 0)
+	undoBtn:SetScript("OnClick", function()
+		JM.MainFrame:UndoRemove()
+	end)
+	undoBar:SetScript("OnUpdate", function(self)
+		local last = JM.Store.lastRemoved
+		if not last or (GetTime() - last.at) >= UNDO_SECONDS then
+			self:Hide()
+		end
+	end)
 end
 
 function ContactList:Refresh(selectedName)
@@ -275,31 +445,83 @@ function ContactList:Refresh(selectedName)
 		return
 	end
 	listContent:SetWidth(listScroll:GetWidth())
-	local list = JM.Store:GetSortedConversationList(filter)
+	local all = JM.Store:GetSortedConversationList(filter)
 
-	for i, entry in ipairs(list) do
-		local row = rows[i]
+	-- What to show. Searching and the Unread view are flat lists; the default
+	-- view keeps unanswered sent-only conversations under the group row.
+	local main, sent = {}, {}
+	local unreadTotal = 0
+	for _, entry in ipairs(all) do
+		local unread = (entry.convo.unreadCount or 0) > 0
+		if unread then
+			unreadTotal = unreadTotal + 1
+		end
+		if view == "unread" then
+			if unread then
+				table.insert(main, entry)
+			end
+		elseif filter == "" and JM.Store:IsSentOnly(entry.convo) and entry.name ~= selectedName then
+			table.insert(sent, entry)
+		else
+			table.insert(main, entry)
+		end
+	end
+
+	unreadTab.text:SetText(unreadTotal > 0 and string.format("Unread (%d)", unreadTotal) or "Unread")
+	PaintTab(allTab, view == "all")
+	PaintTab(unreadTab, view == "unread")
+
+	local used, y = 0, 0
+	local function Place(entry)
+		used = used + 1
+		local row = rows[used]
 		if not row then
 			row = CreateRow(listContent)
-			row:SetPoint("TOPLEFT", listContent, "TOPLEFT", 0, -(i - 1) * ROW_HEIGHT)
-			row:SetPoint("RIGHT", listContent, "RIGHT", 0, 0)
-			rows[i] = row
+			rows[used] = row
 		end
+		row:ClearAllPoints()
+		row:SetPoint("TOPLEFT", listContent, "TOPLEFT", 0, -y)
+		row:SetPoint("RIGHT", listContent, "RIGHT", 0, 0)
 		FillRow(row, entry, selectedName)
 		Skin:StyleRow(row, entry.name == selectedName)
 		row:Show()
+		y = y + ROW_HEIGHT
 	end
 
-	for i = #list + 1, #rows do
+	for _, entry in ipairs(main) do
+		Place(entry)
+	end
+
+	if #sent > 0 then
+		local expanded = WindowDB().sentExpanded
+		groupRow:ClearAllPoints()
+		groupRow:SetPoint("TOPLEFT", listContent, "TOPLEFT", 0, -y)
+		groupRow:SetPoint("RIGHT", listContent, "RIGHT", 0, 0)
+		groupRow.text:SetText(string.format("%s  SENT REQUESTS (%d)", expanded and "-" or "+", #sent))
+		groupRow:Show()
+		y = y + GROUP_HEIGHT
+		if expanded then
+			for _, entry in ipairs(sent) do
+				Place(entry)
+			end
+		end
+	else
+		groupRow:Hide()
+	end
+
+	for i = used + 1, #rows do
 		rows[i].name = nil
 		rows[i]:Hide()
 	end
 
-	listContent:SetHeight(math.max(20, #list * ROW_HEIGHT))
+	listContent:SetHeight(math.max(20, y))
 
-	if #list == 0 then
+	if #main == 0 and #sent == 0 then
 		if filter ~= "" then
 			emptyText:SetText("No chats match \"" .. filter .. "\".")
+			newBtn:Hide()
+		elseif view == "unread" then
+			emptyText:SetText("Nothing unread.")
 			newBtn:Hide()
 		else
 			emptyText:SetText("No conversations yet.")
@@ -310,5 +532,19 @@ function ContactList:Refresh(selectedName)
 		emptyText:Hide()
 		newBtn:Hide()
 	end
-	return #list
+
+	-- Undo bar.
+	local last = JM.Store.lastRemoved
+	if last and (GetTime() - last.at) < UNDO_SECONDS then
+		if #last.items == 1 then
+			undoBar.text:SetText("Removed " .. last.items[1].name .. ".")
+		else
+			undoBar.text:SetText("Removed " .. #last.items .. " conversations.")
+		end
+		undoBar:Show()
+	else
+		undoBar:Hide()
+	end
+
+	return #main + #sent
 end

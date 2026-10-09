@@ -264,6 +264,7 @@ end
 
 function Transcript:Build(parent)
 	scroll = CreateFrame("ScrollFrame", "JM_TranscriptScroll", parent, "UIPanelScrollFrameTemplate")
+	JM.Skin:StyleScrollBar(scroll)
 	scroll:SetPoint("TOPLEFT", 2, -2)
 	scroll:SetPoint("BOTTOMRIGHT", -24, 2)
 

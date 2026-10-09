@@ -142,6 +142,7 @@ function Settings:BuildPage(parent)
 	page:Hide()
 
 	local scroll = CreateFrame("ScrollFrame", "JM_SettingsScroll", page, "UIPanelScrollFrameTemplate")
+	JM.Skin:StyleScrollBar(scroll)
 	scroll:SetPoint("TOPLEFT", 4, -4)
 	scroll:SetPoint("BOTTOMRIGHT", -26, 4)
 

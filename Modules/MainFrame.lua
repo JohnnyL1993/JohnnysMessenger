@@ -13,13 +13,18 @@ local DEFAULT_W, DEFAULT_H = 760, 500
 local MIN_W, MIN_H = 520, 340
 local LIST_MIN, LIST_MAX, LIST_DEFAULT = 160, 320, 220
 local RIGHT_MIN = 300
-local TITLE_H = 30
+-- Title strip (Skin.HEADER_HEIGHT, 28) plus a gap before the two panes.
+local TITLE_H = 36
 local MARGIN = 10
 local DIVIDER_W = 6
 
 local mainFrame, listPanel, divider, rightPane, threadPane, settingsPage, emptyPane
 local headerIcon, headerName, headerDot, headerStatus, headerSub, inviteBtn
-local settingsBtn
+local settingsBtn, unreadText
+local emptyHeading, emptyHint
+local emptyRows = {}
+local EMPTY_ROWS = 6
+local RefreshEmptyPane -- defined below
 local selectedName, dividerTime
 local hiddenByCombat
 local BuildFrame -- defined below; referenced by functions declared earlier
@@ -89,6 +94,7 @@ local function ShowRightPane()
 	else
 		threadPane:Hide()
 		emptyPane:Show()
+		RefreshEmptyPane()
 	end
 end
 
@@ -123,6 +129,21 @@ function MainFrame:RefreshList()
 		return
 	end
 	JM.ContactList:Refresh(selectedName)
+
+	-- Both are created partway through BuildFrame; a refresh can arrive first.
+	if not unreadText or not emptyPane then
+		return
+	end
+	local unread = JM.Store:GetTotalUnread()
+	if unread > 0 then
+		unreadText:SetText(unread .. " UNREAD")
+		unreadText:SetTextColor(Skin.C.accent[1], Skin.C.accent[2], Skin.C.accent[3])
+	else
+		unreadText:SetText("")
+	end
+	if emptyPane:IsShown() then
+		RefreshEmptyPane()
+	end
 end
 
 function MainFrame:RefreshMessages(forceBottom)
@@ -242,6 +263,26 @@ function MainFrame:RemoveConversation(name)
 		JM.Composer:SetConversation(nil)
 		ShowRightPane()
 	end
+	JM.Minimap:UpdateBadge()
+	self:RefreshList()
+end
+
+-- Clears the "Sent requests" group: every conversation in which only you
+-- have spoken, as one undoable batch.
+function MainFrame:RemoveSentRequests()
+	local selectedWasSentOnly = selectedName and JM.Store:IsSentOnly(JM.Store:GetConversation(selectedName))
+	JM.Store:RemoveSentOnly()
+	if selectedWasSentOnly then
+		selectedName = nil
+		JM.Composer:SetConversation(nil)
+		ShowRightPane()
+	end
+	JM.Minimap:UpdateBadge()
+	self:RefreshList()
+end
+
+function MainFrame:UndoRemove()
+	JM.Store:UndoRemove()
 	JM.Minimap:UpdateBadge()
 	self:RefreshList()
 end
@@ -370,6 +411,68 @@ local function BuildHeader(parent)
 	line:SetPoint("TOPRIGHT", 0, -52)
 end
 
+-- Fills the nothing-selected pane: unread conversations first; with none
+-- unread, the most recent ones that aren't unanswered sent requests.
+RefreshEmptyPane = function()
+	if not emptyHeading then
+		return
+	end
+	local list = JM.Store:GetSortedConversationList()
+	local picks, unreadMode = {}, false
+	for _, entry in ipairs(list) do
+		if (entry.convo.unreadCount or 0) > 0 then
+			table.insert(picks, entry)
+		end
+	end
+	if #picks > 0 then
+		unreadMode = true
+	else
+		for _, entry in ipairs(list) do
+			if #entry.convo.messages > 0 and not JM.Store:IsSentOnly(entry.convo) then
+				table.insert(picks, entry)
+			end
+		end
+	end
+
+	if #picks == 0 then
+		emptyHeading:SetText("MESSAGES")
+		emptyHint:Show()
+	else
+		emptyHeading:SetText(unreadMode and "UNREAD" or "RECENT")
+		emptyHint:Hide()
+	end
+
+	for i, row in ipairs(emptyRows) do
+		local entry = picks[i]
+		if entry then
+			local convo = entry.convo
+			local info = JM.PlayerInfo:Get(entry.name, convo)
+			row.name = entry.name
+			JM.PlayerInfo:SetClassIcon(row.icon, info.class)
+			local name = JM.ClassColor:ColorName(entry.name, info.class)
+			if (convo.unreadCount or 0) > 0 then
+				name = name .. string.format("  |cffb9e24a%d new|r", convo.unreadCount)
+			end
+			row.nameText:SetText(name)
+			row.timeText:SetText(JM.ContactList.RelativeTime(convo.lastMessageTime))
+			local last = convo.messages[#convo.messages]
+			local preview = ""
+			if last then
+				local text = string.gsub(last.msg or "", "|c%x%x%x%x%x%x%x%x", "")
+				text = string.gsub(text, "|r", "")
+				text = string.gsub(text, "|H.-|h(.-)|h", "%1")
+				preview = (last.inbound or last.kind == "system") and text or ("You: " .. text)
+			end
+			row.previewText:SetText(preview)
+			row.previewText:SetTextColor(0.6, 0.6, 0.6)
+			row:Show()
+		else
+			row.name = nil
+			row:Hide()
+		end
+	end
+end
+
 function BuildFrame()
 	local win = WindowDB()
 	mainFrame = CreateFrame("Frame", "JM_MainFrame", UIParent)
@@ -398,32 +501,37 @@ function BuildFrame()
 	-- Escape closes it, like Blizzard panels.
 	table.insert(UISpecialFrames, "JM_MainFrame")
 
-	-- Title bar.
-	local title = mainFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
-	title:SetPoint("TOP", 0, -9)
-	title:SetText("Messages")
-	-- Swaps in for the title when a newer version has been seen.
-	JM.VersionCheck:AttachNotice(mainFrame, title)
+	-- Title strip: title and unread count on the left, actions on the right.
+	local title = Skin:AddHeader(mainFrame, "Messages")
+	unreadText = Skin:Heading(mainFrame, 12, Skin.C.accent)
+	unreadText:SetPoint("BOTTOMLEFT", title, "BOTTOMRIGHT", 10, 1)
 
-	local newBtn = CreateTitleButton("+ New", 50, function()
-		MainFrame:PromptNewWhisper()
-	end, "Start a new whisper")
-	newBtn:SetPoint("TOPLEFT", 6, -5)
-
-	local readBtn = CreateTitleButton("Mark read", 66, function()
-		MainFrame:MarkAllRead()
-	end, "Mark all conversations as read")
-	readBtn:SetPoint("LEFT", newBtn, "RIGHT", 4, 0)
+	-- The update notice sits in the middle of the strip, which is free now.
+	-- It hides whatever title it's handed while showing, so give it a
+	-- throwaway one rather than the real title.
+	local noticeStandIn = mainFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	noticeStandIn:Hide()
+	JM.VersionCheck:AttachNotice(mainFrame, noticeStandIn)
 
 	local close = CreateTitleButton("X", 20, function()
 		MainFrame:Hide()
 	end)
-	close:SetPoint("TOPRIGHT", -6, -5)
+	close:SetPoint("TOPRIGHT", -4, -4)
 
 	settingsBtn = CreateTitleButton("Settings", 60, function()
 		MainFrame:ToggleSettings()
 	end)
 	settingsBtn:SetPoint("RIGHT", close, "LEFT", -4, 0)
+
+	local readBtn = CreateTitleButton("Mark all read", 86, function()
+		MainFrame:MarkAllRead()
+	end, "Mark all conversations as read")
+	readBtn:SetPoint("RIGHT", settingsBtn, "LEFT", -4, 0)
+
+	local newBtn = CreateTitleButton("New whisper", 86, function()
+		MainFrame:PromptNewWhisper()
+	end, "Start a new whisper")
+	newBtn:SetPoint("RIGHT", readBtn, "LEFT", -4, 0)
 
 	-- Left pane.
 	listPanel = CreateFrame("Frame", nil, mainFrame)
@@ -478,20 +586,65 @@ function BuildFrame()
 
 	JM.Composer:Build(threadPane)
 
+	-- Nothing selected: instead of a blank pane, list what's unread (or, with
+	-- nothing unread, the most recent real conversations), one click to open.
 	emptyPane = CreateFrame("Frame", nil, rightPane)
 	emptyPane:SetAllPoints()
-	local emptyTitle = emptyPane:CreateFontString(nil, "OVERLAY", "GameFontHighlightLarge")
-	emptyTitle:SetPoint("CENTER", 0, 24)
-	emptyTitle:SetText("Johnny's Messenger")
-	local emptyText = emptyPane:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	emptyText:SetPoint("TOP", emptyTitle, "BOTTOM", 0, -8)
-	emptyText:SetTextColor(0.6, 0.6, 0.6)
-	emptyText:SetText("Pick a conversation on the left, or start a new one.")
-	local emptyBtn = Skin:CreateButton(emptyPane, 130, 24, "Start new whisper")
-	emptyBtn:SetPoint("TOP", emptyText, "BOTTOM", 0, -12)
-	emptyBtn:SetScript("OnClick", function()
-		MainFrame:PromptNewWhisper()
-	end)
+
+	emptyHeading = Skin:Heading(emptyPane, 13, Skin.C.muted)
+	emptyHeading:SetPoint("TOPLEFT", 16, -16)
+
+	for i = 1, EMPTY_ROWS do
+		local row = CreateFrame("Button", nil, emptyPane)
+		row:SetHeight(40)
+		row:SetPoint("TOPLEFT", 12, -38 - (i - 1) * 42)
+		row:SetPoint("RIGHT", emptyPane, "RIGHT", -12, 0)
+		Skin:StylePanel(row, 1)
+		row:SetBackdropColor(Skin.C.panel[1], Skin.C.panel[2], Skin.C.panel[3], 1)
+		local hl = row:CreateTexture(nil, "HIGHLIGHT")
+		hl:SetAllPoints()
+		hl:SetTexture(Skin.WHITE)
+		hl:SetVertexColor(1, 1, 1, 0.06)
+
+		row.icon = row:CreateTexture(nil, "ARTWORK")
+		row.icon:SetSize(26, 26)
+		row.icon:SetPoint("LEFT", 8, 0)
+
+		row.timeText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+		row.timeText:SetPoint("TOPRIGHT", -10, -7)
+		row.timeText:SetTextColor(0.55, 0.55, 0.55)
+
+		row.nameText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+		row.nameText:SetPoint("TOPLEFT", row.icon, "TOPRIGHT", 8, 0)
+		row.nameText:SetPoint("RIGHT", row.timeText, "LEFT", -6, 0)
+		row.nameText:SetJustifyH("LEFT")
+		row.nameText:SetHeight(12)
+
+		row.previewText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+		row.previewText:SetPoint("BOTTOMLEFT", row.icon, "BOTTOMRIGHT", 8, 0)
+		row.previewText:SetPoint("RIGHT", row, "RIGHT", -10, 0)
+		row.previewText:SetJustifyH("LEFT")
+		row.previewText:SetHeight(12)
+		if row.previewText.SetWordWrap then
+			row.previewText:SetWordWrap(false)
+		end
+
+		row:SetScript("OnClick", function(self)
+			if self.name then
+				MainFrame:SelectConversation(self.name)
+			end
+		end)
+		row:Hide()
+		emptyRows[i] = row
+	end
+
+	emptyHint = emptyPane:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	emptyHint:SetPoint("TOPLEFT", 16, -40)
+	emptyHint:SetPoint("RIGHT", emptyPane, "RIGHT", -16, 0)
+	emptyHint:SetJustifyH("LEFT")
+	emptyHint:SetTextColor(0.6, 0.6, 0.6)
+	emptyHint:SetText("No conversations yet. Use New whisper above to start one - incoming whispers will appear here on their own.")
+	emptyHint:Hide()
 
 	settingsPage = JM.Settings:BuildPage(rightPane)
 

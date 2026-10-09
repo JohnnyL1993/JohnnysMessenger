@@ -326,3 +326,119 @@ function Skin:StyleRow(row, selected)
 		end
 	end
 end
+
+----------------------------------------------------------------------------
+-- "Workshop rack" look shared with the Addon Hub drawer: blue-black panels,
+-- 1px rules, one lime accent, condensed uppercase headings. The Style*
+-- functions above already use these values; the helpers below are for
+-- window title strips, section headings and numbered rows.
+----------------------------------------------------------------------------
+Skin.C = {
+	ground = { 0.063, 0.078, 0.086 },
+	panel = { 0.090, 0.114, 0.125 },
+	rule = { 0.180, 0.224, 0.243 },
+	rule2 = { 0.243, 0.298, 0.322 },
+	text = { 0.902, 0.925, 0.918 },
+	muted = { 0.604, 0.659, 0.651 },
+	dim = { 0.560, 0.620, 0.610 },
+	accent = { 0.725, 0.886, 0.290 },
+	short = { 1.000, 0.450, 0.400 },
+}
+Skin.FONT_HEAD = "Fonts\\ARIALN.TTF"
+Skin.FONT_TEXT = "Fonts\\FRIZQT__.TTF"
+Skin.HEADER_HEIGHT = 28
+
+-- Heading text (titles, counts, row numbers). Arial Narrow gets thin and hard
+-- to read below about 14px, so only the larger sizes use it - small headings
+-- fall back to the game's regular face.
+function Skin:Heading(parent, size, color)
+	color = color or self.C.text
+	local fs = parent:CreateFontString(nil, "OVERLAY")
+	if size < 14 then
+		fs:SetFont(self.FONT_TEXT, math.max(10, size - 1))
+	else
+		fs:SetFont(self.FONT_HEAD, size)
+	end
+	fs:SetTextColor(color[1], color[2], color[3])
+	return fs
+end
+
+function Skin:Solid(parent, layer, color)
+	local tex = parent:CreateTexture(nil, layer)
+	tex:SetTexture(self.WHITE)
+	tex:SetVertexColor(color[1], color[2], color[3], 1)
+	return tex
+end
+
+-- Title strip across the top of a StylePanel'd window: a lighter band with a
+-- rule under it and the title top-left in uppercase. Returns the title's
+-- font string so callers can anchor a breadcrumb or count after it.
+function Skin:AddHeader(frame, text, size)
+	local bg = self:Solid(frame, "BORDER", self.C.panel)
+	bg:SetPoint("TOPLEFT", frame, "TOPLEFT", 1, -1)
+	bg:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -1, -1)
+	bg:SetHeight(self.HEADER_HEIGHT - 1)
+
+	local rule = self:Solid(frame, "ARTWORK", self.C.rule)
+	rule:SetPoint("TOPLEFT", frame, "TOPLEFT", 1, -self.HEADER_HEIGHT)
+	rule:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -1, -self.HEADER_HEIGHT)
+	rule:SetHeight(1)
+
+	size = size or 16
+	local title = self:Heading(frame, size, self.C.text)
+	title:SetPoint("LEFT", frame, "TOPLEFT", 12, -self.HEADER_HEIGHT / 2)
+	title:SetText(string.upper(text))
+	return title
+end
+
+-- Flattens a UIPanelScrollFrameTemplate's stock gold scrollbar to match the
+-- skin: plain arrow buttons, a slim grey thumb and a faint track. The
+-- template's own scrolling behaviour is left alone - only its art changes.
+-- `scroll` must be a named frame (the template names its scrollbar after it).
+function Skin:StyleScrollBar(scroll)
+	local name = scroll and scroll:GetName()
+	local bar = name and _G[name .. "ScrollBar"]
+	if not bar or bar.jpStyled then
+		return
+	end
+	bar.jpStyled = true
+	local C = self.C
+
+	local function Flatten(button, glyph, nudge)
+		if not button then
+			return
+		end
+		for _, getter in ipairs({ "GetNormalTexture", "GetPushedTexture", "GetDisabledTexture", "GetHighlightTexture" }) do
+			local tex = button[getter] and button[getter](button)
+			if tex then
+				tex:SetTexture(nil)
+			end
+		end
+		local bg = button:CreateTexture(nil, "BACKGROUND")
+		bg:SetPoint("TOPLEFT", 3, -3)
+		bg:SetPoint("BOTTOMRIGHT", -3, 3)
+		bg:SetTexture(self.WHITE)
+		bg:SetVertexColor(C.panel[1], C.panel[2], C.panel[3], 1)
+		local fs = button:CreateFontString(nil, "OVERLAY")
+		fs:SetFont(self.FONT_TEXT, 9)
+		fs:SetPoint("CENTER", 0, nudge)
+		fs:SetText(glyph)
+		fs:SetTextColor(C.muted[1], C.muted[2], C.muted[3])
+	end
+	Flatten(_G[name .. "ScrollBarScrollUpButton"], "^", -2)
+	Flatten(_G[name .. "ScrollBarScrollDownButton"], "v", 1)
+
+	local thumb = bar.GetThumbTexture and bar:GetThumbTexture()
+	if thumb then
+		thumb:SetTexture(self.WHITE)
+		thumb:SetVertexColor(0.330, 0.400, 0.430, 1)
+		thumb:SetWidth(8)
+		thumb:SetHeight(28)
+	end
+
+	local track = bar:CreateTexture(nil, "BACKGROUND")
+	track:SetTexture(self.WHITE)
+	track:SetVertexColor(C.ground[1], C.ground[2], C.ground[3], 0.6)
+	track:SetPoint("TOPLEFT", bar, "TOPLEFT", 4, 0)
+	track:SetPoint("BOTTOMRIGHT", bar, "BOTTOMRIGHT", -4, 0)
+end
