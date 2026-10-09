@@ -2,7 +2,7 @@
 ## Title: Johnny's Messenger
 ## Notes: Teams-style whisper messenger. Left pane lists your conversations, right pane shows the open thread.
 ## Author: Johnny
-## Version: 2.1.1
+## Version: 2.2
 ## SavedVariables: JohnnysMessengerDB
 ## DefaultState: Enabled
 

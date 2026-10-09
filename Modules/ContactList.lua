@@ -136,7 +136,7 @@ local function CreateRow(parent)
 
 	local bar = row:CreateTexture(nil, "OVERLAY")
 	bar:SetTexture(Skin.WHITE)
-	bar:SetVertexColor(1, 1, 1, 1)
+	bar:SetVertexColor(0.725, 0.886, 0.290, 1)
 	bar:SetPoint("TOPLEFT")
 	bar:SetPoint("BOTTOMLEFT")
 	bar:SetWidth(2)
