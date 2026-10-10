@@ -4,6 +4,10 @@ A World of Warcraft 3.3.5a addon for the Warmane private server.
 
 Teams-style whisper messenger. Left pane lists your conversations, right pane shows the open thread.
 
+## Screenshots
+
+![Messenger](screenshots/messenger.png)
+
 ## Features
 
 - **Chat bubbles**: their messages on the left, yours on the right. Messages within two minutes of each other are grouped under one name and time. Day separators and a "New messages" divider mark where you left off.
