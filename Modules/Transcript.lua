@@ -23,6 +23,9 @@ local OUTGOING_BG = { 0.24, 0.24, 0.24, 0.95 }
 local URL_COLOR = "9ecfff"
 
 local scroll, content, measureNat, measureWrap
+-- [name] = true while a conversation's history (messages from before today)
+-- is opened up. Session-only: every login starts on today's messages.
+local showHistory = {}
 local bubblePool, labelPool, sepPool, systemPool = {}, {}, {}, {}
 local used = { bubble = 0, label = 0, sep = 0, system = 0 }
 
@@ -242,8 +245,25 @@ local function AcquireSeparator()
 		s.right:SetHeight(1)
 		s.right:SetPoint("LEFT", s.text, "RIGHT", 8, 0)
 		s.right:SetPoint("RIGHT", -10, 0)
+		s:SetScript("OnMouseUp", function(self)
+			if self.onClick then
+				self.onClick()
+			end
+		end)
+		s:SetScript("OnEnter", function(self)
+			if self.onClick then
+				self.text:SetTextColor(0.725, 0.886, 0.290)
+			end
+		end)
+		s:SetScript("OnLeave", function(self)
+			if self.onClick then
+				self.text:SetTextColor(1, 1, 1)
+			end
+		end)
 		sepPool[used.sep] = s
 	end
+	s.onClick = nil
+	s:EnableMouse(false)
 	s:ClearAllPoints()
 	s:Show()
 	return s
@@ -289,15 +309,35 @@ function Transcript:Build(parent)
 	return scroll
 end
 
+-- Emoji icons are taller than the font, but GetStringHeight counts every
+-- line at the font's height, so a wrapped message with emojis came out too
+-- short for its bubble. With icons in the text, every line is counted at
+-- the icon's height instead.
+local function FixIconHeight(text, h)
+	if not string.find(text, "|T", 1, true) then
+		return h
+	end
+	measureNat:SetText("Ag")
+	local lineH = measureNat:GetStringHeight()
+	if not lineH or lineH <= 0 then
+		return h
+	end
+	local _, fontSize = JM_MessageFont:GetFont()
+	local iconH = math.floor((fontSize or 12) * 1.5) + 2
+	local lines = math.max(1, math.floor(h / lineH + 0.5))
+	return lines * math.max(lineH, iconH)
+end
+
 local function Measure(text, maxInner)
 	measureNat:SetText(text)
 	local natural = measureNat:GetStringWidth()
 	if natural <= maxInner then
-		return math.ceil(natural), math.ceil(measureNat:GetStringHeight())
+		local h = measureNat:GetStringHeight()
+		return math.ceil(natural), math.ceil(FixIconHeight(text, h))
 	end
 	measureWrap:SetWidth(maxInner)
 	measureWrap:SetText(text)
-	return maxInner, math.ceil(measureWrap:GetStringHeight())
+	return maxInner, math.ceil(FixIconHeight(text, measureWrap:GetStringHeight()))
 end
 
 function Transcript:IsAtBottom()
@@ -338,7 +378,42 @@ function Transcript:Render(name, convo, opts)
 	local y = 8
 	local prev, prevDay, dividerPlaced
 
+	-- Live chat shows today's messages only (Settings); anything older sits
+	-- behind a "history" bar at the top until it's opened.
+	local cutoff
+	if JM.Settings:Get("todayOnly") and not showHistory[name] then
+		local t = date("*t")
+		t.hour, t.min, t.sec = 0, 0, 0
+		cutoff = time(t)
+	end
+	local older = 0
 	for _, m in ipairs(convo.messages) do
+		if m.time and m.time < (cutoff or 0) then
+			older = older + 1
+		end
+	end
+	if older > 0 or showHistory[name] then
+		local s = AcquireSeparator()
+		s:SetPoint("TOPLEFT", 0, -y)
+		s:SetPoint("RIGHT", content, "RIGHT", 0, 0)
+		if showHistory[name] then
+			s.text:SetText("History shown - hide messages before today")
+		else
+			s.text:SetText(string.format("History: %d earlier message%s - show", older, older == 1 and "" or "s"))
+		end
+		s.text:SetTextColor(1, 1, 1)
+		s.left:SetVertexColor(0.725, 0.886, 0.290, 0.5)
+		s.right:SetVertexColor(0.725, 0.886, 0.290, 0.5)
+		s:EnableMouse(true)
+		s.onClick = function()
+			showHistory[name] = not showHistory[name] or nil
+			JM.MainFrame:RefreshMessages(not showHistory[name])
+		end
+		y = y + 28
+	end
+
+	for _, m in ipairs(convo.messages) do
+	  if not (cutoff and m.time and m.time < cutoff) then
 		local day = DayKey(m.time)
 		local breakGroup = false
 
@@ -394,7 +469,7 @@ function Transcript:Render(name, convo, opts)
 				y = y + GAP_IN_GROUP
 			end
 
-			local text = Linkify(m.msg)
+			local text = JM.Emoji:Render(Linkify(m.msg))
 			local textW, textH = Measure(text, maxInner)
 			local b = AcquireBubble()
 			b.rawText = m.msg
@@ -437,6 +512,7 @@ function Transcript:Render(name, convo, opts)
 			y = y + b:GetHeight()
 			prev = m
 		end
+	  end
 	end
 
 	content:SetHeight(y + 8)

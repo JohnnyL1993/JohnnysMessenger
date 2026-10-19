@@ -19,7 +19,8 @@ local MARGIN = 10
 local DIVIDER_W = 6
 
 local mainFrame, listPanel, divider, rightPane, threadPane, settingsPage, emptyPane
-local headerIcon, headerName, headerDot, headerStatus, headerSub, inviteBtn
+local headerIcon, headerName, headerDot, headerStatus, headerSub, inviteBtn, friendBtn, ignoreBtn
+local headerLine, transcriptPanel, LayoutHeader
 local settingsBtn, unreadText
 local emptyHeading, emptyHint
 local emptyRows = {}
@@ -78,7 +79,115 @@ local function RefreshHeader()
 	headerDot:SetStatus(info.status)
 	headerStatus:SetText(JM.PlayerInfo:StatusLabel(info.status))
 	headerSub:SetText(JM.PlayerInfo:Describe(info))
+	MainFrame:RefreshRelationButtons()
+	LayoutHeader()
 end
+
+-- When the pane is too narrow for the name and the three buttons side by
+-- side, the buttons drop to a row of their own under the name and the
+-- conversation starts lower down.
+local HEADER_LINE, HEADER_LINE_STACKED = 52, 80
+LayoutHeader = function()
+	if not inviteBtn or not headerLine then
+		return
+	end
+	local paneW = inviteBtn:GetParent():GetWidth() or 0
+	local nameW = (headerName:GetStringWidth() or 0) + 20 + (headerStatus:GetStringWidth() or 0)
+	local textW = math.max(nameW, headerSub:GetStringWidth() or 0)
+	local buttonsW = inviteBtn:GetWidth() + friendBtn:GetWidth() + ignoreBtn:GetWidth() + 8
+	local stacked = paneW > 0 and (10 + 32 + 10 + textW + 12 + buttonsW + 10) > paneW
+	local lineY = stacked and HEADER_LINE_STACKED or HEADER_LINE
+	inviteBtn:ClearAllPoints()
+	friendBtn:ClearAllPoints()
+	ignoreBtn:ClearAllPoints()
+	if stacked then
+		-- Own row under the name, lined up with the icon on the left.
+		ignoreBtn:SetPoint("TOPLEFT", 10, -50)
+		friendBtn:SetPoint("LEFT", ignoreBtn, "RIGHT", 4, 0)
+		inviteBtn:SetPoint("LEFT", friendBtn, "RIGHT", 4, 0)
+	else
+		inviteBtn:SetPoint("TOPRIGHT", -10, -10)
+		friendBtn:SetPoint("RIGHT", inviteBtn, "LEFT", -4, 0)
+		ignoreBtn:SetPoint("RIGHT", friendBtn, "LEFT", -4, 0)
+	end
+	headerLine:ClearAllPoints()
+	headerLine:SetPoint("TOPLEFT", 0, -lineY)
+	headerLine:SetPoint("TOPRIGHT", 0, -lineY)
+	transcriptPanel:ClearAllPoints()
+	transcriptPanel:SetPoint("TOPLEFT", 0, -(lineY + 2))
+	transcriptPanel:SetPoint("BOTTOMRIGHT", 0, 48)
+end
+
+-- Friend / Ignore state for the open conversation (3.3.5a has no IsFriend or
+-- IsIgnored, so the lists are walked).
+local function IsFriend(name)
+	for i = 1, GetNumFriends() do
+		if GetFriendInfo(i) == name then
+			return true
+		end
+	end
+	return false
+end
+
+local function IsIgnored(name)
+	for i = 1, GetNumIgnores() do
+		if GetIgnoreName(i) == name then
+			return true
+		end
+	end
+	return false
+end
+
+function MainFrame:RefreshRelationButtons()
+	if not friendBtn or not selectedName then
+		return
+	end
+	local C = Skin.C
+	if IsFriend(selectedName) then
+		friendBtn.text:SetText("Friend")
+		friendBtn.text:SetTextColor(C.accent[1], C.accent[2], C.accent[3])
+		friendBtn.isFriend = true
+	else
+		friendBtn.text:SetText("Add friend")
+		friendBtn.text:SetTextColor(1, 1, 1)
+		friendBtn.isFriend = nil
+	end
+	if IsIgnored(selectedName) then
+		ignoreBtn.text:SetText("Unignore")
+		ignoreBtn.isIgnored = true
+	else
+		ignoreBtn.text:SetText("Ignore")
+		ignoreBtn.isIgnored = nil
+	end
+end
+
+StaticPopupDialogs["JM_UNFRIEND_CONFIRM"] = {
+	text = "Remove %s from your friends list?",
+	button1 = REMOVE or "Remove",
+	button2 = CANCEL or "Cancel",
+	OnAccept = function(self, name)
+		if name then
+			RemoveFriend(name)
+		end
+	end,
+	timeout = 0,
+	whileDead = 1,
+	hideOnEscape = 1,
+}
+
+StaticPopupDialogs["JM_IGNORE_CONFIRM"] = {
+	text = "Ignore %s?\n\nYou won't receive their whispers until you unignore them.",
+	button1 = "Ignore",
+	button2 = CANCEL or "Cancel",
+	OnAccept = function(self, name)
+		if name then
+			AddIgnore(name)
+		end
+	end,
+	timeout = 0,
+	whileDead = 1,
+	hideOnEscape = 1,
+}
 
 --------------------------------------
 --   Right pane state               --
@@ -195,6 +304,7 @@ function MainFrame:SelectConversation(name)
 		dividerTime = ComputeDividerTime(convo)
 	end
 	selectedName = name
+	JM.ContactList:ShowViewFor(name)
 	JM.Store:MarkRead(name)
 	JM.Minimap:UpdateBadge()
 	JM.Composer:SetConversation(name)
@@ -403,12 +513,63 @@ local function BuildHeader(parent)
 		end
 	end)
 
+	-- Friend list / ignore list, for the open conversation.
+	friendBtn = Skin:CreateButton(parent, 70, 20, "Add friend")
+	friendBtn:SetPoint("RIGHT", inviteBtn, "LEFT", -4, 0)
+	friendBtn:SetScript("OnClick", function(self)
+		if not selectedName then
+			return
+		end
+		if self.isFriend then
+			local dialog = StaticPopup_Show("JM_UNFRIEND_CONFIRM", selectedName)
+			if dialog then
+				dialog.data = selectedName
+			end
+		else
+			AddFriend(selectedName)
+		end
+	end)
+	friendBtn:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_BOTTOM")
+		GameTooltip:AddLine(self.isFriend and "On your friends list - click to remove" or "Add to your friends list")
+		GameTooltip:Show()
+	end)
+	friendBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+	ignoreBtn = Skin:CreateButton(parent, 64, 20, "Ignore")
+	ignoreBtn:SetPoint("RIGHT", friendBtn, "LEFT", -4, 0)
+	ignoreBtn:SetScript("OnClick", function(self)
+		if not selectedName then
+			return
+		end
+		if self.isIgnored then
+			DelIgnore(selectedName)
+		else
+			local dialog = StaticPopup_Show("JM_IGNORE_CONFIRM", selectedName)
+			if dialog then
+				dialog.data = selectedName
+			end
+		end
+	end)
+
+	-- Keep the two buttons' labels right as the lists change.
+	local listWatch = CreateFrame("Frame")
+	listWatch:RegisterEvent("FRIENDLIST_UPDATE")
+	listWatch:RegisterEvent("IGNORELIST_UPDATE")
+	listWatch:SetScript("OnEvent", function()
+		MainFrame:RefreshRelationButtons()
+	end)
+
 	local line = parent:CreateTexture(nil, "ARTWORK")
 	line:SetTexture(Skin.WHITE)
 	line:SetVertexColor(1, 1, 1, 0.08)
 	line:SetHeight(1)
 	line:SetPoint("TOPLEFT", 0, -52)
 	line:SetPoint("TOPRIGHT", 0, -52)
+	headerLine = line
+	parent:HookScript("OnSizeChanged", function()
+		LayoutHeader()
+	end)
 end
 
 -- Fills the nothing-selected pane: unread conversations first; with none
@@ -574,7 +735,7 @@ function BuildFrame()
 	threadPane:Hide()
 	BuildHeader(threadPane)
 
-	local transcriptPanel = CreateFrame("Frame", nil, threadPane)
+	transcriptPanel = CreateFrame("Frame", nil, threadPane)
 	transcriptPanel:SetPoint("TOPLEFT", 0, -54)
 	transcriptPanel:SetPoint("BOTTOMRIGHT", 0, 48)
 	local transcriptScroll = JM.Transcript:Build(transcriptPanel)
@@ -657,13 +818,31 @@ function BuildFrame()
 	resizeTex:SetVertexColor(1, 1, 1, 0.3)
 	resizeTex:SetPoint("BOTTOMRIGHT", -2, 2)
 	resizeTex:SetSize(6, 6)
-	resize:SetScript("OnMouseDown", function()
+	-- Sized by hand rather than StartSizing: the window is anchored by its
+	-- centre (or wherever it was dragged to), and StartSizing then grew it
+	-- from that anchor and snapped the corner past the cursor on the first
+	-- click. Here the top-left is pinned and the corner follows the cursor
+	-- by exactly how far it moves.
+	resize:SetScript("OnMouseDown", function(self)
 		mainFrame.isMoving = true
-		mainFrame:StartSizing("BOTTOMRIGHT")
+		local left, top = mainFrame:GetLeft(), mainFrame:GetTop()
+		mainFrame:ClearAllPoints()
+		mainFrame:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", left, top)
+		local scale = mainFrame:GetEffectiveScale()
+		local cx, cy = GetCursorPosition()
+		local startX, startY = cx / scale, cy / scale
+		local startW, startH = mainFrame:GetWidth(), mainFrame:GetHeight()
+		self:SetScript("OnUpdate", function()
+			local x, y = GetCursorPosition()
+			x, y = x / scale, y / scale
+			local w = math.max(MIN_W, math.min(1600, startW + (x - startX)))
+			local h = math.max(MIN_H, math.min(1200, startH + (startY - y)))
+			mainFrame:SetSize(w, h)
+		end)
 	end)
-	resize:SetScript("OnMouseUp", function()
+	resize:SetScript("OnMouseUp", function(self)
+		self:SetScript("OnUpdate", nil)
 		mainFrame.isMoving = nil
-		mainFrame:StopMovingOrSizing()
 		win.width = math.floor(mainFrame:GetWidth() + 0.5)
 		win.height = math.floor(mainFrame:GetHeight() + 0.5)
 		SavePosition()
@@ -679,7 +858,18 @@ function BuildFrame()
 	end)
 	mainFrame:SetScript("OnSizeChanged", relayout)
 
+	-- First open after an update: show what changed beside the window; and
+	-- close it again with the window.
+	mainFrame:HookScript("OnHide", function()
+		if JM.Changelog then
+			JM.Changelog:Hide()
+			JM.Emoji:HidePicker()
+		end
+	end)
 	mainFrame:SetScript("OnShow", function()
+		if JM.Changelog then
+			pcall(JM.Changelog.ShowIfUnseen, JM.Changelog)
+		end
 		JM.PlayerInfo:RequestGuildRoster()
 		ShowRightPane()
 		MainFrame:RefreshList()
@@ -728,6 +918,9 @@ combatFrame:SetScript("OnEvent", function(self, event)
 		return
 	end
 	if event == "PLAYER_REGEN_DISABLED" and mainFrame:IsShown() then
+		if JM.Settings:Get("stayWhileTyping") and JM.Composer:HasFocus() then
+			return
+		end
 		hiddenByCombat = true
 		mainFrame:Hide()
 	elseif event == "PLAYER_REGEN_ENABLED" and hiddenByCombat then

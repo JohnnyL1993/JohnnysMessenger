@@ -8,6 +8,12 @@ local PlayerInfo = JM.PlayerInfo
 
 local friends, guild = {}, {}
 
+-- Online/offline learned from whispers (not friends, guild or group) only
+-- holds for this long; after that the contact shows as unknown rather than
+-- claiming they're still online.
+local PRESENCE_TTL = 5 * 60
+local TICK_SECONDS = 30
+
 -- Localized class name ("Paladin"/"Paladine") -> English token ("PALADIN").
 local classTokenByLocalized = {}
 local function BuildClassMap()
@@ -84,6 +90,17 @@ function PlayerInfo:Init()
 	events:RegisterEvent("RAID_ROSTER_UPDATE")
 	ShowFriends()
 	self:RequestGuildRoster()
+	-- Re-check presence while the window is open so stale dots go grey and
+	-- the guild roster stays current.
+	local function Tick()
+		local frame = _G.JM_MainFrame
+		if frame and frame:IsShown() then
+			PlayerInfo:RequestGuildRoster()
+			JM.MainFrame:OnPresenceChanged()
+		end
+		JM.Timer:After(TICK_SECONDS, Tick)
+	end
+	JM.Timer:After(TICK_SECONDS, Tick)
 end
 
 -- GuildRoster() is server-throttled; only ask occasionally (window opens).
@@ -124,13 +141,14 @@ function PlayerInfo:Get(name, convo)
 	if convo then
 		result.class = result.class or convo.class
 		result.level = result.level or convo.level
+		local fresh = convo.onlineAt and (time() - convo.onlineAt) < PRESENCE_TTL
 		if not result.status then
-			if convo.online == false then
+			if fresh and convo.online == false then
 				result.status = "offline"
-			elseif convo.online then
+			elseif fresh and convo.online then
 				result.status = convo.away or "online"
 			end
-		elseif result.status == "online" and convo.away then
+		elseif result.status == "online" and fresh and convo.away then
 			result.status = convo.away
 		end
 		-- Remember level/class so an offline contact still shows them.

@@ -54,8 +54,11 @@ local function ShowQuickReplies(anchor)
 		end })
 	end
 	if #menu == 1 then
-		table.insert(menu, { text = "None set - add some in Settings", notCheckable = 1, disabled = 1 })
+		table.insert(menu, { text = "None set yet", notCheckable = 1, disabled = 1 })
 	end
+	table.insert(menu, { text = "|cffb9e24aEdit quick replies...|r", notCheckable = 1, func = function()
+		JM.MainFrame:ToggleSettings(true)
+	end })
 	table.insert(menu, { text = CANCEL or "Cancel", notCheckable = 1 })
 	EasyMenu(menu, qrMenuFrame, anchor, 0, 0, "MENU")
 end
@@ -85,8 +88,30 @@ function Composer:Build(parent)
 		GameTooltip:Hide()
 	end)
 
+	-- Emoji picker: types the code (":)") into the box; Messenger shows it as
+	-- an icon once sent (see Modules\Emoji.lua).
+	local emojiBtn = Skin:CreateButton(parent, 30, 28, ":)")
+	emojiBtn:SetPoint("RIGHT", qrBtn, "LEFT", -6, 0)
+	emojiBtn:SetScript("OnClick", function(self)
+		JM.Emoji:TogglePicker(self, function(code)
+			local before = editBox:GetText() or ""
+			local spacer = (before ~= "" and not string.find(before, "%s$")) and " " or ""
+			editBox:SetFocus()
+			editBox:Insert(spacer .. code .. " ")
+		end)
+	end)
+	emojiBtn:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_TOP")
+		GameTooltip:AddLine("Emojis")
+		GameTooltip:AddLine("Sent as :) :D <3 and so on - Messenger users see the icon.", 0.7, 0.7, 0.7, true)
+		GameTooltip:Show()
+	end)
+	emojiBtn:SetScript("OnLeave", function()
+		GameTooltip:Hide()
+	end)
+
 	holder:SetPoint("BOTTOMLEFT", 10, 10)
-	holder:SetPoint("RIGHT", qrBtn, "LEFT", -6, 0)
+	holder:SetPoint("RIGHT", emojiBtn, "LEFT", -6, 0)
 
 	counter = holder:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	counter:SetPoint("BOTTOMRIGHT", holder, "TOPRIGHT", 0, 2)
@@ -94,8 +119,40 @@ function Composer:Build(parent)
 	counter:Hide()
 
 	editBox:SetScript("OnEnterPressed", function(self)
+		local hadText = string.match(self:GetText() or "", "%S")
 		Send()
-		self:ClearFocus()
+		-- Enter on an empty box always leaves it, like the chat box.
+		if not hadText then
+			self:ClearFocus()
+			return
+		end
+		-- "Keep typing after sending" (Settings): stay in the box until Esc
+		-- or a click outside the window.
+		if not JM.Settings:Get("keepFocus") then
+			self:ClearFocus()
+		end
+	end)
+
+	-- A click anywhere outside the Messenger window (or the emoji picker)
+	-- leaves the box, so a kept focus never traps your movement keys.
+	local clickWatch = CreateFrame("Frame")
+	clickWatch:Hide()
+	clickWatch:SetScript("OnUpdate", function()
+		if not editBox:HasFocus() then
+			clickWatch:Hide()
+			return
+		end
+		if IsMouseButtonDown("LeftButton") or IsMouseButtonDown("RightButton") then
+			local window = _G["JM_MainFrame"]
+			local overMenu = DropDownList1 and DropDownList1:IsShown() and MouseIsOver(DropDownList1)
+			if not (window and MouseIsOver(window)) and not JM.Emoji:IsPickerOver() and not overMenu then
+				editBox:ClearFocus()
+				clickWatch:Hide()
+			end
+		end
+	end)
+	editBox:HookScript("OnEditFocusGained", function()
+		clickWatch:Show()
 	end)
 	editBox:HookScript("OnTextChanged", function(self, userInput)
 		UpdateCounter()

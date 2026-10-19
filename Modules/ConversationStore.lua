@@ -39,6 +39,7 @@ function Store:Init()
 	for _, convo in pairs(self.conversations) do
 		convo.online = nil
 		convo.away = nil
+		convo.onlineAt = nil
 	end
 
 	self:Prune()
@@ -83,6 +84,7 @@ function Store:AddMessage(name, englishClass, msg, inbound)
 	})
 	convo.lastMessageTime = now
 	convo.online = true
+	convo.onlineAt = now
 	if inbound then
 		-- Sending chat clears AFK/DND in WoW, so a fresh whisper from them
 		-- means they're no longer away.
@@ -189,8 +191,11 @@ end
 -- True for a conversation in which only you have spoken: at least one
 -- message, none of them from the other player. Pinned conversations and ones
 -- with a draft in progress never count, so they stay in the main list.
-function Store:IsSentOnly(convo)
-	if not convo or convo.pinned or #convo.messages == 0 or (convo.draft and convo.draft ~= "") then
+-- ignoreDraft: for deciding which tab it's listed in, an unsent draft
+-- doesn't count (otherwise typing a reply would move it between tabs). Clear
+-- leaves conversations with a draft alone.
+function Store:IsSentOnly(convo, ignoreDraft)
+	if not convo or convo.pinned or #convo.messages == 0 or (not ignoreDraft and convo.draft and convo.draft ~= "") then
 		return false
 	end
 	for _, m in ipairs(convo.messages) do
@@ -246,8 +251,20 @@ function Store:GetSortedConversationList(filter)
 	local list = {}
 	for name, convo in pairs(self.conversations) do
 		local hasContent = #convo.messages > 0 or (convo.draft and convo.draft ~= "") or convo.keep
-		if hasContent and (not filter or string.find(string.lower(name), filter, 1, true)) then
-			table.insert(list, { name = name, convo = convo })
+		if hasContent then
+			if not filter or string.find(string.lower(name), filter, 1, true) then
+				table.insert(list, { name = name, convo = convo })
+			else
+				-- Search the messages too; the newest matching line is shown
+				-- as the row's preview (entry.match).
+				for i = #convo.messages, 1, -1 do
+					local m = convo.messages[i]
+					if m.kind ~= "system" and m.msg and string.find(string.lower(m.msg), filter, 1, true) then
+						table.insert(list, { name = name, convo = convo, match = m.inbound and m.msg or ("You: " .. m.msg) })
+						break
+					end
+				end
+			end
 		end
 	end
 	table.sort(list, function(a, b)
@@ -258,6 +275,33 @@ function Store:GetSortedConversationList(filter)
 		return (a.convo.lastMessageTime or 0) > (b.convo.lastMessageTime or 0)
 	end)
 	return list
+end
+
+-- "Delete all but today": drops every message from before today's midnight,
+-- and any conversation left empty (unless pinned or holding a draft).
+-- Returns how many messages went.
+function Store:DeleteBeforeToday()
+	local t = date("*t")
+	t.hour, t.min, t.sec = 0, 0, 0
+	local cutoff = time(t)
+	local removed = 0
+	for name, convo in pairs(self.conversations) do
+		local kept = {}
+		for _, m in ipairs(convo.messages or {}) do
+			if m.time and m.time >= cutoff then
+				table.insert(kept, m)
+			else
+				removed = removed + 1
+			end
+		end
+		convo.messages = kept
+		if #kept == 0 and not convo.pinned and not (convo.draft and convo.draft ~= "") then
+			self.conversations[name] = nil
+		else
+			convo.unreadCount = math.min(convo.unreadCount or 0, #kept)
+		end
+	end
+	return removed
 end
 
 function Store:Prune()

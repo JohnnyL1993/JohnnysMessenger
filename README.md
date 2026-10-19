@@ -12,19 +12,22 @@ Teams-style whisper messenger. Left pane lists your conversations, right pane sh
 
 - **Chat bubbles**: their messages on the left, yours on the right. Messages within two minutes of each other are grouped under one name and time. Day separators and a "New messages" divider mark where you left off.
 - **Clickable links**: item, spell and achievement links in a message show tooltips and can be clicked. Web addresses open a copy box. Right-click a bubble to copy its text.
-- **Contact list**: class icons, online/away/busy/offline dots (from your friends list, guild and group), last-message preview, unread badges and a search box.
+- **Contact list**: class icons, online/away/busy/offline dots (from your friends list, guild and group), last-message preview, unread badges, All / Unread / Sent tabs, and a search box that looks inside messages as well as names.
 - **Right-click a contact** to pin it to the top, mute it, mark it unread, invite them, run `/who`, or remove the conversation.
 - **Reply box**: each conversation keeps its own draft. Quick replies are one click away, and Up/Down recalls messages you've sent.
+- **Emojis**: a smiley button next to the reply box. They're sent as plain `:)` `:D` `<3`, so players without Messenger still see the text.
+- **Conversation header**: Friend, Ignore and Invite buttons. Older messages sit behind a **History** bar so threads open on today.
 - **Resizable window**: drag the bottom-right corner, or drag the line between the two panes. The window fades when you're not using it.
 - **Settings** (gear button in the title bar):
   - Auto-open on incoming whispers
   - Hide whispers from the default chat
-  - Whisper sound
+  - Whisper sound (WoW whisper, Messenger chime, or any shared addon sound)
   - Hide during combat
   - 12h/24h time
   - Opacity, scale and font size
   - History limits
   - Quick replies
+  - Changelog and Report a bug / request buttons
 - **Minimap button** with an unread count, a pulse while anything is unread, and the top unread senders in its tooltip.
 - **Keybindings** under Key Bindings > AddOns: toggle the window, reply to the last whisper.
 - **Update notice**: when another player is running a newer version, a gold "Update available" notice replaces the window title. Click it for a copyable link to the Releases page.

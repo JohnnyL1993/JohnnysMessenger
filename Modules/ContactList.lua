@@ -14,11 +14,11 @@ local GROUP_HEIGHT = 24
 local UNDO_SECONDS = 10
 
 local listScroll, listContent, searchHolder, emptyText, newBtn
-local allTab, unreadTab, groupRow, groupClear, undoBar
+local allTab, unreadTab, sentTab, groupRow, groupClear, undoBar
 local rows = {}
 local filter = ""
--- "all" (the default: real conversations, then unanswered sent requests
--- folded under one row) or "unread".
+-- "all" (the default: real conversations), "unread", or "sent" (whispers
+-- you sent that were never answered).
 local view = "all"
 
 --------------------------------------
@@ -257,10 +257,14 @@ local function FillRow(row, entry, selectedName)
 			preview = (last.inbound or last.kind == "system") and PlainText(last.msg) or ("You: " .. PlainText(last.msg))
 		end
 	end
+	-- Found by searching the message text: show the line that matched.
+	if entry.match then
+		preview = "|cffb9e24aFound:|r " .. PlainText(entry.match)
+	end
 	if convo.muted then
 		preview = "(muted) " .. (preview or "")
 	end
-	row.previewText:SetText(Truncate(preview or "", 120))
+	row.previewText:SetText(JM.Emoji:Render(Truncate(preview or "", 120), 15))
 	row.previewText:SetTextColor(0.6, 0.6, 0.6)
 
 	local unread = (convo.unreadCount or 0) > 0
@@ -328,6 +332,29 @@ function ContactList:Build(parent)
 	searchHolder.editBox:SetScript("OnEnterPressed", searchHolder.editBox.ClearFocus)
 	searchHolder.UpdatePlaceholder()
 
+	-- Clicking anywhere outside the window leaves the search box, same as
+	-- the reply box, so it doesn't hold on to your movement keys.
+	local searchBox = searchHolder.editBox
+	local searchWatch = CreateFrame("Frame")
+	searchWatch:Hide()
+	searchWatch:SetScript("OnUpdate", function(self)
+		if not searchBox:HasFocus() then
+			self:Hide()
+			return
+		end
+		if IsMouseButtonDown("LeftButton") or IsMouseButtonDown("RightButton") then
+			local window = _G["JM_MainFrame"]
+			local overMenu = DropDownList1 and DropDownList1:IsShown() and MouseIsOver(DropDownList1)
+			if not (window and MouseIsOver(window)) and not overMenu then
+				searchBox:ClearFocus()
+				self:Hide()
+			end
+		end
+	end)
+	searchBox:HookScript("OnEditFocusGained", function()
+		searchWatch:Show()
+	end)
+
 	-- All / Unread.
 	allTab = Skin:CreateButton(parent, 50, 20, "All")
 	allTab:SetPoint("TOPLEFT", 6, -32)
@@ -345,6 +372,21 @@ function ContactList:Build(parent)
 	end)
 	unreadTab:SetScript("OnMouseUp", function(self) PaintTab(self, view == "unread") end)
 
+	sentTab = Skin:CreateButton(parent, 60, 20, "Sent")
+	sentTab:SetPoint("LEFT", unreadTab, "RIGHT", 2, 0)
+	sentTab:SetScript("OnClick", function()
+		view = "sent"
+		JM.MainFrame:RefreshList()
+	end)
+	sentTab:SetScript("OnMouseUp", function(self) PaintTab(self, view == "sent") end)
+	sentTab:SetScript("OnEnter", function(self)
+		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+		GameTooltip:AddLine("Sent requests", 1, 1, 1)
+		GameTooltip:AddLine("Whispers you sent that were never answered. They move to All as soon as the other player replies.", nil, nil, nil, true)
+		GameTooltip:Show()
+	end)
+	sentTab:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
 	listScroll = CreateFrame("ScrollFrame", "JM_ContactScroll", parent, "UIPanelScrollFrameTemplate")
 	listScroll:SetPoint("TOPLEFT", 2, -58)
 	listScroll:SetPoint("BOTTOMRIGHT", -24, 2)
@@ -357,9 +399,7 @@ function ContactList:Build(parent)
 		listContent:SetWidth(w)
 	end)
 
-	-- "Sent requests (9)": conversations where only you have spoken (join
-	-- whispers nobody answered, mostly), folded away under one row so they
-	-- don't bury real conversations. Click to expand; Clear removes them all.
+	-- Header of the Sent tab: "SENT REQUESTS (9)" with Clear to remove them all.
 	groupRow = CreateFrame("Button", nil, listContent)
 	groupRow:SetHeight(GROUP_HEIGHT)
 	local groupBg = groupRow:CreateTexture(nil, "BACKGROUND")
@@ -372,17 +412,6 @@ function ContactList:Build(parent)
 	groupHl:SetVertexColor(1, 1, 1, 0.06)
 	groupRow.text = Skin:Heading(groupRow, 11, C.muted)
 	groupRow.text:SetPoint("LEFT", 10, 0)
-	groupRow:SetScript("OnClick", function()
-		WindowDB().sentExpanded = not WindowDB().sentExpanded or nil
-		JM.MainFrame:RefreshList()
-	end)
-	groupRow:SetScript("OnEnter", function(self)
-		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-		GameTooltip:AddLine("Sent requests", 1, 1, 1)
-		GameTooltip:AddLine("Whispers you sent that were never answered. They move back into the main list as soon as the other player replies.", nil, nil, nil, true)
-		GameTooltip:Show()
-	end)
-	groupRow:SetScript("OnLeave", function() GameTooltip:Hide() end)
 	groupRow:Hide()
 
 	groupClear = Skin:CreateButton(groupRow, 44, 16, "Clear")
@@ -393,7 +422,7 @@ function ContactList:Build(parent)
 	groupClear:SetScript("OnEnter", function(self)
 		GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
 		GameTooltip:AddLine("Clear sent requests", 1, 1, 1)
-		GameTooltip:AddLine("Removes every unanswered conversation in this group. You get a few seconds to undo.", nil, nil, nil, true)
+		GameTooltip:AddLine("Removes every unanswered conversation in this tab. You get a few seconds to undo.", nil, nil, nil, true)
 		GameTooltip:Show()
 	end)
 	groupClear:SetScript("OnLeave", function() GameTooltip:Hide() end)
@@ -440,6 +469,21 @@ function ContactList:Build(parent)
 	end)
 end
 
+-- When a conversation is opened from outside the list (new whisper, /w,
+-- an incoming whisper), switch between All and Sent so it's visible.
+function ContactList:ShowViewFor(name)
+	local convo = name and JM.Store:GetConversation(name)
+	if not convo or filter ~= "" then
+		return
+	end
+	local sentOnly = JM.Store:IsSentOnly(convo, true)
+	if view == "all" and sentOnly then
+		view = "sent"
+	elseif view == "sent" and not sentOnly then
+		view = "all"
+	end
+end
+
 function ContactList:Refresh(selectedName)
 	if not listContent then
 		return
@@ -447,29 +491,41 @@ function ContactList:Refresh(selectedName)
 	listContent:SetWidth(listScroll:GetWidth())
 	local all = JM.Store:GetSortedConversationList(filter)
 
-	-- What to show. Searching and the Unread view are flat lists; the default
-	-- view keeps unanswered sent-only conversations under the group row.
+	-- What to show. All holds real conversations, Sent the ones only you
+	-- have spoken in - each conversation is in exactly one of the two.
+	-- Unread is everything unread; searching from All covers both.
 	local main, sent = {}, {}
-	local unreadTotal = 0
+	local unreadTotal, sentCount = 0, 0
 	for _, entry in ipairs(all) do
 		local unread = (entry.convo.unreadCount or 0) > 0
 		if unread then
 			unreadTotal = unreadTotal + 1
 		end
+		local sentOnly = JM.Store:IsSentOnly(entry.convo, true)
+		if sentOnly then
+			sentCount = sentCount + 1
+		end
 		if view == "unread" then
 			if unread then
 				table.insert(main, entry)
 			end
-		elseif filter == "" and JM.Store:IsSentOnly(entry.convo) and entry.name ~= selectedName then
-			table.insert(sent, entry)
-		else
+		elseif view == "sent" then
+			if sentOnly then
+				table.insert(sent, entry)
+			end
+		elseif not sentOnly or filter ~= "" then
 			table.insert(main, entry)
 		end
 	end
 
 	unreadTab.text:SetText(unreadTotal > 0 and string.format("Unread (%d)", unreadTotal) or "Unread")
+	sentTab.text:SetText(sentCount > 0 and string.format("Sent (%d)", sentCount) or "Sent")
+	for _, tab in ipairs({ allTab, unreadTab, sentTab }) do
+		tab:SetWidth(math.max(34, math.floor(tab.text:GetStringWidth() + 16)))
+	end
 	PaintTab(allTab, view == "all")
 	PaintTab(unreadTab, view == "unread")
+	PaintTab(sentTab, view == "sent")
 
 	local used, y = 0, 0
 	local function Place(entry)
@@ -488,25 +544,22 @@ function ContactList:Refresh(selectedName)
 		y = y + ROW_HEIGHT
 	end
 
-	for _, entry in ipairs(main) do
-		Place(entry)
-	end
-
 	if #sent > 0 then
-		local expanded = WindowDB().sentExpanded
 		groupRow:ClearAllPoints()
 		groupRow:SetPoint("TOPLEFT", listContent, "TOPLEFT", 0, -y)
 		groupRow:SetPoint("RIGHT", listContent, "RIGHT", 0, 0)
-		groupRow.text:SetText(string.format("%s  SENT REQUESTS (%d)", expanded and "-" or "+", #sent))
+		groupRow.text:SetText(string.format("SENT REQUESTS (%d)", sentCount))
 		groupRow:Show()
 		y = y + GROUP_HEIGHT
-		if expanded then
-			for _, entry in ipairs(sent) do
-				Place(entry)
-			end
+		for _, entry in ipairs(sent) do
+			Place(entry)
 		end
 	else
 		groupRow:Hide()
+	end
+
+	for _, entry in ipairs(main) do
+		Place(entry)
 	end
 
 	for i = used + 1, #rows do
@@ -522,6 +575,9 @@ function ContactList:Refresh(selectedName)
 			newBtn:Hide()
 		elseif view == "unread" then
 			emptyText:SetText("Nothing unread.")
+			newBtn:Hide()
+		elseif view == "sent" then
+			emptyText:SetText("No unanswered whispers.")
 			newBtn:Hide()
 		else
 			emptyText:SetText("No conversations yet.")

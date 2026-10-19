@@ -30,15 +30,80 @@ WhisperEngine.CHAT_MSG_AFK_CONTROLLER = BlockController
 WhisperEngine.CHAT_MSG_DND_CONTROLLER = BlockController
 -- CHAT_MSG_SYSTEM carries lots of unrelated text; leave it visible in chat.
 
+-- The whisper sound. Messenger always plays it itself (the chat window stays
+-- silent if no chat tab shows whispers). Choices: the game's own whisper
+-- sound, Messenger's chime, or any sound another addon has registered with
+-- LibSharedMedia - ElvUI's "Whisper Alert", for one.
+local CHIME = "Interface\\AddOns\\JohnnysMessenger\\Media\\Sounds\\chime.wav"
+
+local function LSM()
+	return LibStub and LibStub:GetLibrary("LibSharedMedia-3.0", true)
+end
+
+-- { key, label } for every choice available right now. "lsm:<name>" keys
+-- point at LibSharedMedia sounds.
+function WhisperEngine:GetSoundChoices()
+	local list = {
+		{ key = "default", label = "WoW whisper" },
+		{ key = "chime", label = "Messenger chime" },
+	}
+	local lsm = LSM()
+	if lsm then
+		local names = {}
+		for _, name in ipairs(lsm:List("sound") or {}) do
+			if name ~= "None" then
+				table.insert(names, name)
+			end
+		end
+		table.sort(names)
+		for _, name in ipairs(names) do
+			table.insert(list, { key = "lsm:" .. name, label = name, shared = true })
+		end
+	end
+	return list
+end
+
+function WhisperEngine:SoundLabel(key)
+	key = key or "default"
+	if key == "default" then
+		return "WoW whisper"
+	elseif key == "chime" then
+		return "Messenger chime"
+	end
+	return string.sub(key, 5)
+end
+
+function WhisperEngine:PlayWhisperSound()
+	local key = JM.Settings:Get("soundName") or "default"
+	local file
+	if key == "chime" then
+		file = CHIME
+	elseif string.sub(key, 1, 4) == "lsm:" then
+		local lsm = LSM()
+		file = lsm and lsm:Fetch("sound", string.sub(key, 5), true)
+	end
+	if file and pcall(PlaySoundFile, file, "Master") then
+		return
+	end
+	-- The game sound; with sound effects off it goes out on Master instead.
+	if GetCVar("Sound_EnableSFX") == "0" then
+		pcall(PlaySoundFile, "Sound\\Interface\\iTellMessage.wav", "Master")
+	else
+		PlaySound("TellMessage")
+	end
+end
+
 function WhisperEngine:CHAT_MSG_WHISPER(msg, author, _, _, _, _, _, _, _, _, _, guid)
 	local englishClass = JM.ClassColor:GetClassByGUID(guid)
 	local convo = JM.Store:AddMessage(author, englishClass, msg, true)
 	ChatEdit_SetLastTellTarget(author)
 	local name = JM.Store.FormatUserName(author)
-	-- The default chat frame plays this itself when it shows the whisper, so
-	-- only play it when we've hidden the whisper from chat.
-	if JM.Settings:Get("sound") and JM.Settings:Get("hideFromChat") and convo and not convo.muted then
-		PlaySound("TellMessage")
+	-- No sound while the window is up (you can see the message arrive),
+	-- unless "even while the window is open" is ticked.
+	local window = _G.JM_MainFrame
+	local open = window and window:IsShown()
+	if JM.Settings:Get("sound") and convo and not convo.muted and (not open or JM.Settings:Get("soundWhenOpen")) then
+		WhisperEngine:PlayWhisperSound()
 	end
 	-- Pop the window open on the incoming conversation if it's not already
 	-- open on something else, same as WIM did for individual whisper windows
@@ -49,11 +114,33 @@ function WhisperEngine:CHAT_MSG_WHISPER(msg, author, _, _, _, _, _, _, _, _, _, 
 	JM.Minimap:UpdateBadge()
 end
 
+-- Whispers typed in the normal chat box (/w, /r): remembered here so the
+-- echo below can open that conversation. Whispers other addons send happen
+-- with no chat box open, so they never count.
+local typedWhispers = {}
+hooksecurefunc("SendChatMessage", function(msg, chatType, _, target)
+	if chatType ~= "WHISPER" or not target then
+		return
+	end
+	local box = (ChatEdit_GetActiveWindow and ChatEdit_GetActiveWindow()) or ACTIVE_CHAT_EDIT_BOX
+	if box and box:IsShown() then
+		typedWhispers[JM.Store.FormatUserName(target)] = GetTime()
+	end
+end)
+
 function WhisperEngine:CHAT_MSG_WHISPER_INFORM(msg, target, _, _, _, _, _, _, _, _, _, guid)
 	local englishClass = JM.ClassColor:GetClassByGUID(guid)
 	JM.Store:AddMessage(target, englishClass, msg, false)
 	ChatEdit_SetLastToldTarget(target)
-	JM.MainFrame:OnMessageReceived(JM.Store.FormatUserName(target))
+	local name = JM.Store.FormatUserName(target)
+	local typedAt = typedWhispers[name]
+	typedWhispers[name] = nil
+	if typedAt and GetTime() - typedAt < 10 and JM.Settings:Get("openOnSend") and not InCombatLockdown() then
+		JM.MainFrame:Show()
+		JM.MainFrame:SelectConversation(name)
+		return
+	end
+	JM.MainFrame:OnMessageReceived(name)
 end
 
 -- Their AFK/DND auto-reply: mark them away and show the reply in the thread.
@@ -64,6 +151,7 @@ local function AwayReply(flag, label)
 			return
 		end
 		convo.online = true
+		convo.onlineAt = time()
 		convo.away = flag
 		local name = JM.Store.FormatUserName(author)
 		local text = name .. " is " .. label
@@ -77,18 +165,48 @@ end
 WhisperEngine.CHAT_MSG_AFK = AwayReply("afk", "away")
 WhisperEngine.CHAT_MSG_DND = AwayReply("dnd", "busy (do not disturb)")
 
-local notFoundPattern
+-- Turns a GlobalStrings format ("%s has gone offline.") into a match
+-- pattern whose first %s is a capture.
+local function ToPattern(fmt)
+	if not fmt then
+		return nil
+	end
+	local p = string.gsub(fmt, "%%s", "\001")
+	p = string.gsub(p, "([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1")
+	p = string.gsub(p, "\001", "(.-)", 1)
+	p = string.gsub(p, "\001", ".-")
+	return "^" .. p .. "$"
+end
+
+local notFoundPattern, wentOfflinePattern, cameOnlinePattern
 function WhisperEngine:CHAT_MSG_SYSTEM(msg)
-	notFoundPattern = notFoundPattern or string.gsub(ERR_CHAT_PLAYER_NOT_FOUND_S, "%%s", "(.+)")
-	local offlineName = string.match(msg, notFoundPattern)
+	notFoundPattern = notFoundPattern or ToPattern(ERR_CHAT_PLAYER_NOT_FOUND_S)
+	wentOfflinePattern = wentOfflinePattern or ToPattern(ERR_FRIEND_OFFLINE_S)
+	cameOnlinePattern = cameOnlinePattern or ToPattern(ERR_FRIEND_ONLINE_SS)
+	local offlineName = notFoundPattern and string.match(msg, notFoundPattern)
 	if offlineName then
 		local convo = JM.Store:GetConversation(offlineName)
 		if convo then
 			local name = JM.Store.FormatUserName(offlineName)
 			convo.online = false
+			convo.onlineAt = time()
 			convo.away = nil
 			JM.Store:AddSystemMessage(name, name .. " is not online.")
 			JM.MainFrame:OnMessageReceived(name)
+		end
+		return
+	end
+	-- Friend/guild log-in and log-out notices: update the dot quietly.
+	local leftName = wentOfflinePattern and string.match(msg, wentOfflinePattern)
+	local joinedName = not leftName and cameOnlinePattern and string.match(msg, cameOnlinePattern)
+	local who = leftName or joinedName
+	if who then
+		local convo = JM.Store:GetConversation(who)
+		if convo then
+			convo.online = joinedName and true or false
+			convo.onlineAt = time()
+			convo.away = nil
+			JM.MainFrame:OnPresenceChanged()
 		end
 	end
 end

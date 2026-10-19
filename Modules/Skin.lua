@@ -231,8 +231,25 @@ function Skin:CreateSlider(parent, label, minV, maxV, step, format, onChange)
 	slider:SetScript("OnValueChanged", function(self, value)
 		value = Round(value)
 		valueText:SetText(format and format(value) or tostring(value))
-		if holder.ready and onChange then
+		if not holder.ready or not onChange then
+			return
+		end
+		if holder.applyOnRelease and self.dragging then
+			holder.pending = value
+		else
 			onChange(value)
+		end
+	end)
+	-- Sliders whose change resizes their own window (scale) wait for release.
+	slider:SetScript("OnMouseDown", function(self)
+		self.dragging = true
+	end)
+	slider:SetScript("OnMouseUp", function(self)
+		self.dragging = nil
+		if holder.pending ~= nil and onChange then
+			local v = holder.pending
+			holder.pending = nil
+			onChange(v)
 		end
 	end)
 
