@@ -144,8 +144,124 @@ local function ShowBubbleMenu(bubble)
 	local raw = bubble.rawText
 	EasyMenu({
 		{ text = "Copy text", notCheckable = 1, func = function() Transcript.ShowCopyPopup(raw) end },
+		{ text = "Export conversation...", notCheckable = 1, func = function()
+			Transcript:ShowExport(JM.MainFrame:GetSelected())
+		end },
 		{ text = CANCEL or "Cancel", notCheckable = 1 },
 	}, copyMenuFrame, "cursor", 0, 0, "MENU")
+end
+
+--------------------------------------
+--   Export                         --
+--------------------------------------
+
+-- Plain text for copying out of the game: links become [Name], colours and
+-- icons are dropped.
+local function PlainText(msg)
+	msg = msg or ""
+	msg = string.gsub(msg, "|c%x%x%x%x%x%x%x%x", "")
+	msg = string.gsub(msg, "|r", "")
+	msg = string.gsub(msg, "|H.-|h(.-)|h", "%1")
+	msg = string.gsub(msg, "|T.-|t", "")
+	return msg
+end
+
+local exportFrame, exportBox, exportTitle, exportText
+
+local function BuildExport()
+	exportFrame = CreateFrame("Frame", "JM_ExportFrame", UIParent)
+	exportFrame:SetSize(520, 420)
+	exportFrame:SetPoint("CENTER")
+	exportFrame:SetFrameStrata("DIALOG")
+	exportFrame:SetToplevel(true)
+	exportFrame:SetClampedToScreen(true)
+	exportFrame:SetMovable(true)
+	exportFrame:EnableMouse(true)
+	exportFrame:RegisterForDrag("LeftButton")
+	exportFrame:SetScript("OnDragStart", exportFrame.StartMoving)
+	exportFrame:SetScript("OnDragStop", exportFrame.StopMovingOrSizing)
+	Skin:StylePanel(exportFrame, 0.97)
+	exportTitle = Skin:AddHeader(exportFrame, "Export", 14)
+	table.insert(UISpecialFrames, "JM_ExportFrame")
+
+	local close = Skin:CreateButton(exportFrame, 20, 20, "X")
+	close:SetPoint("TOPRIGHT", -4, -4)
+	close:SetScript("OnClick", function() exportFrame:Hide() end)
+
+	local hint = exportFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	hint:SetPoint("BOTTOMLEFT", 12, 12)
+	hint:SetTextColor(0.6, 0.66, 0.65)
+	hint:SetText("Select what you want (or Select all), then Ctrl+C to copy.")
+
+	local selectAll = Skin:CreateButton(exportFrame, 80, 20, "Select all")
+	selectAll:SetPoint("BOTTOMRIGHT", -12, 8)
+	selectAll:SetScript("OnClick", function()
+		exportBox:SetFocus()
+		exportBox:HighlightText()
+	end)
+
+	local scroll = CreateFrame("ScrollFrame", "JM_ExportScroll", exportFrame, "UIPanelScrollFrameTemplate")
+	scroll:SetPoint("TOPLEFT", 12, -(Skin.HEADER_HEIGHT + 10))
+	scroll:SetPoint("BOTTOMRIGHT", -32, 36)
+	Skin:StyleScrollBar(scroll)
+	local bg = Skin:Solid(exportFrame, "BACKGROUND", Skin.C.ground)
+	bg:SetPoint("TOPLEFT", scroll, "TOPLEFT", -4, 4)
+	bg:SetPoint("BOTTOMRIGHT", scroll, "BOTTOMRIGHT", 4, -4)
+
+	exportBox = CreateFrame("EditBox", nil, scroll)
+	exportBox:SetMultiLine(true)
+	exportBox:SetAutoFocus(false)
+	exportBox:SetMaxLetters(0)
+	exportBox:SetFontObject(GameFontHighlightSmall)
+	exportBox:SetWidth(470)
+	exportBox:SetScript("OnEscapePressed", function() exportFrame:Hide() end)
+	-- Read-only: any typing puts the conversation back.
+	exportBox:SetScript("OnTextChanged", function(self, userInput)
+		if userInput and exportText then
+			self:SetText(exportText)
+		end
+	end)
+	exportBox:SetScript("OnCursorChanged", function(self, x, y, w, h)
+		local offset = scroll:GetVerticalScroll()
+		local height = scroll:GetHeight()
+		y = -y
+		if y < offset then
+			scroll:SetVerticalScroll(y)
+		elseif y + h > offset + height then
+			scroll:SetVerticalScroll(y + h - height)
+		end
+	end)
+	scroll:SetScrollChild(exportBox)
+	scroll:SetScript("OnMouseDown", function() exportBox:SetFocus() end)
+	scroll:EnableMouse(true)
+end
+
+-- The whole conversation (not just today's) as plain text in a window you
+-- can select from and copy: "2026-10-12 22:32  Name: message".
+function Transcript:ShowExport(name)
+	local convo = name and JM.Store:GetConversation(name)
+	if not convo then
+		return
+	end
+	if not exportFrame then
+		BuildExport()
+	end
+	local me = UnitName("player")
+	local lines = {}
+	for _, m in ipairs(convo.messages) do
+		local when = date("%Y-%m-%d %H:%M", m.time or 0)
+		if m.kind == "system" then
+			table.insert(lines, when .. "  * " .. PlainText(m.msg))
+		else
+			table.insert(lines, when .. "  " .. (m.inbound and name or me) .. ": " .. PlainText(m.msg))
+		end
+	end
+	exportText = table.concat(lines, "\n")
+	exportTitle:SetText(string.upper("Export - " .. name) .. "  (" .. #lines .. " lines)")
+	exportBox:SetText(exportText)
+	exportFrame:Show()
+	exportBox:SetFocus()
+	exportBox:HighlightText()
 end
 
 local function AcquireBubble()

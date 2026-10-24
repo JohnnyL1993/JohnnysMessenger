@@ -142,6 +142,11 @@ function Composer:Build(parent)
 			clickWatch:Hide()
 			return
 		end
+		-- Shift-clicking an item in your bags (or an achievement, quest...)
+		-- is how links get typed in - that must not knock you out of the box.
+		if IsShiftKeyDown() then
+			return
+		end
 		if IsMouseButtonDown("LeftButton") or IsMouseButtonDown("RightButton") then
 			local window = _G["JM_MainFrame"]
 			local overMenu = DropDownList1 and DropDownList1:IsShown() and MouseIsOver(DropDownList1)
@@ -198,8 +203,73 @@ end
 -- ChatEdit_InsertLink silently no-ops while typing here. Hook it and insert
 -- into our own box when IT is the one actually focused - hooksecurefunc
 -- leaves the original function (and real chat windows) untouched.
-hooksecurefunc("ChatEdit_InsertLink", function(link)
-	if editBox and editBox:IsVisible() and editBox:HasFocus() then
-		editBox:Insert(link)
+--
+-- With the Messenger window open on a conversation and nothing else to type
+-- into (no chat box open, no Auction House search, no other text box
+-- focused), a shift-click goes into the reply box too, focusing it - so you
+-- don't have to click into the box first.
+local lastLink, lastLinkAt
+local function InsertLink(link)
+	if not editBox or not link or not editBox:IsVisible() then
+		return
 	end
-end)
+	-- Some clicks reach here twice (our achievement hook below and the
+	-- normal chat-link path); only insert once.
+	local now = GetTime()
+	if link == lastLink and lastLinkAt and now - lastLinkAt < 0.3 then
+		return
+	end
+	lastLink, lastLinkAt = link, now
+	if editBox:HasFocus() then
+		editBox:Insert(link)
+		return
+	end
+	if not currentName then
+		return
+	end
+	if ChatEdit_GetActiveWindow and ChatEdit_GetActiveWindow() then
+		return
+	end
+	if BrowseName and BrowseName:IsVisible() then
+		return
+	end
+	if GetCurrentKeyBoardFocus and GetCurrentKeyBoardFocus() then
+		return
+	end
+	editBox:SetFocus()
+	editBox:Insert(link)
+end
+hooksecurefunc("ChatEdit_InsertLink", InsertLink)
+
+-- The achievement window on this client inserts links straight into the
+-- open chat box instead of going through ChatEdit_InsertLink, so
+-- shift-clicked achievements never reached the reply box. Watch its click
+-- handlers directly (the window is load-on-demand, so hook when it loads).
+local function HookAchievements()
+	for _, fname in ipairs({ "AchievementButton_OnClick", "AchievementFrameSummaryAchievement_OnClick" }) do
+		if type(_G[fname]) == "function" then
+			hooksecurefunc(fname, function(self, ignoreModifiers)
+				if ignoreModifiers or not IsModifiedClick("CHATLINK") then
+					return
+				end
+				local id = self and (self.id or (self.GetID and self:GetID()))
+				local link = id and id > 0 and GetAchievementLink(id)
+				if link then
+					InsertLink(link)
+				end
+			end)
+		end
+	end
+end
+if IsAddOnLoaded("Blizzard_AchievementUI") then
+	HookAchievements()
+else
+	local waiter = CreateFrame("Frame")
+	waiter:RegisterEvent("ADDON_LOADED")
+	waiter:SetScript("OnEvent", function(self, _, addon)
+		if addon == "Blizzard_AchievementUI" then
+			self:UnregisterEvent("ADDON_LOADED")
+			HookAchievements()
+		end
+	end)
+end

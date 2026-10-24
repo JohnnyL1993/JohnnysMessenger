@@ -112,6 +112,11 @@ function WhisperEngine:CHAT_MSG_WHISPER(msg, author, _, _, _, _, _, _, _, _, _, 
 	-- typing to someone else, don't yank them away - just update the list.
 	JM.MainFrame:HandleIncomingWhisper(name)
 	JM.Minimap:UpdateBadge()
+	-- Flash WoW on the Windows taskbar if you're alt-tabbed (only on clients
+	-- that have FlashClientIcon; it does nothing while WoW has focus).
+	if FlashClientIcon and JM.Settings:Get("flashTaskbar") and convo and not convo.muted then
+		FlashClientIcon()
+	end
 end
 
 -- Whispers typed in the normal chat box (/w, /r): remembered here so the

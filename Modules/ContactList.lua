@@ -94,6 +94,9 @@ local function ShowContextMenu(name)
 		{ text = "Who is this?", notCheckable = 1, func = function()
 			SendWho("n-\"" .. name .. "\"")
 		end },
+		{ text = "Export conversation...", notCheckable = 1, func = function()
+			JM.Transcript:ShowExport(name)
+		end },
 		{ text = "|cffff6060Remove conversation|r", notCheckable = 1, func = function()
 			JM.MainFrame:RemoveConversation(name)
 		end },

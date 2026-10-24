@@ -9,6 +9,8 @@ Settings.DEFAULTS = {
 	autoOpen = true,
 	hideFromChat = true,
 	sound = true,
+	-- Flash WoW's taskbar button on a whisper while alt-tabbed (if the client can).
+	flashTaskbar = true,
 	-- The whisper sound is skipped while the window is open unless this is on.
 	soundWhenOpen = false,
 	-- "default" (game whisper), "chime", or "lsm:<LibSharedMedia name>".
@@ -180,6 +182,11 @@ local CHECKBOXES = {
 	{ key = "use24h", label = "24-hour timestamps" },
 	{ key = "todayOnly", label = "Show only today's messages (older ones under History)" },
 }
+
+-- Only offered on clients that can actually flash the taskbar.
+if FlashClientIcon then
+	table.insert(CHECKBOXES, { key = "flashTaskbar", label = "Flash WoW on the taskbar for whispers while alt-tabbed" })
+end
 
 local function Percent(v)
 	return math.floor(v * 100 + 0.5) .. "%"

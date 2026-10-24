@@ -325,10 +325,10 @@ function MainFrame:OnMessageReceived(name)
 		return
 	end
 	if mainFrame:IsShown() and threadPane:IsShown() and name == selectedName then
-		-- They're looking at it, so it's read.
+		-- They're looking at it, so it's read - and jump to the new message.
 		JM.Store:MarkRead(name)
 		JM.Minimap:UpdateBadge()
-		self:RefreshMessages()
+		self:RefreshMessages(true)
 	end
 	self:RefreshList()
 end

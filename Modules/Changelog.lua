@@ -14,6 +14,18 @@ local Skin = NS.Skin
 
 local ENTRIES = {
 	{
+		version = "2.5",
+		changes = {
+			"Export conversation (right-click a message or a contact): the whole chat as plain text to select and copy.",
+			"Shift-clicking an item, achievement or quest with the window open puts the link in the reply box (no need to click into it first).",
+			"New messages - yours and theirs - scroll the conversation to the bottom.",
+		},
+		fixes = {
+			"Shift-clicking a link while typing knocked you out of the reply box, so the link never arrived.",
+			"Shift-clicked achievements never reached the reply box (the achievement window skips the normal link path on this client).",
+		},
+	},
+	{
 		version = "2.4",
 		changes = {
 			"Emojis: a smiley button next to the reply box. They're sent as :) :D <3 and so on, so anyone without Messenger sees the text; Messenger shows them as icons for you and anyone else using it.",
