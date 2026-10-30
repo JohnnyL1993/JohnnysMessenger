@@ -147,7 +147,7 @@ local function CreateRow(parent)
 
 	local bar = row:CreateTexture(nil, "OVERLAY")
 	bar:SetTexture(Skin.WHITE)
-	bar:SetVertexColor(0.725, 0.886, 0.290, 1)
+	bar:SetVertexColor(JohnnysAccent.color[1], JohnnysAccent.color[2], JohnnysAccent.color[3], 1)
 	bar:SetPoint("TOPLEFT")
 	bar:SetPoint("BOTTOMLEFT")
 	bar:SetWidth(2)
@@ -262,7 +262,7 @@ local function FillRow(row, entry, selectedName)
 	end
 	-- Found by searching the message text: show the line that matched.
 	if entry.match then
-		preview = "|cffb9e24aFound:|r " .. PlainText(entry.match)
+		preview = "|cff" .. JohnnysAccent.hex .. "Found:|r " .. PlainText(entry.match)
 	end
 	if convo.muted then
 		preview = "(muted) " .. (preview or "")
@@ -484,6 +484,19 @@ function ContactList:ShowViewFor(name)
 		view = "sent"
 	elseif view == "sent" and not sentOnly then
 		view = "all"
+	end
+end
+
+-- A new message lights up that conversation's row for a moment.
+function ContactList:FlashRow(name)
+	if not JohnnysFX then
+		return
+	end
+	for _, row in ipairs(rows) do
+		if row.name == name and row:IsVisible() then
+			JohnnysFX:Flash(row)
+			return
+		end
 	end
 end
 

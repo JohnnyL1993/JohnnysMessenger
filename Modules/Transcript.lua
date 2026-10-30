@@ -368,7 +368,7 @@ local function AcquireSeparator()
 		end)
 		s:SetScript("OnEnter", function(self)
 			if self.onClick then
-				self.text:SetTextColor(0.725, 0.886, 0.290)
+				self.text:SetTextColor(JohnnysAccent.color[1], JohnnysAccent.color[2], JohnnysAccent.color[3])
 			end
 		end)
 		s:SetScript("OnLeave", function(self)
@@ -518,8 +518,8 @@ function Transcript:Render(name, convo, opts)
 			s.text:SetText(string.format("History: %d earlier message%s - show", older, older == 1 and "" or "s"))
 		end
 		s.text:SetTextColor(1, 1, 1)
-		s.left:SetVertexColor(0.725, 0.886, 0.290, 0.5)
-		s.right:SetVertexColor(0.725, 0.886, 0.290, 0.5)
+		s.left:SetVertexColor(JohnnysAccent.color[1], JohnnysAccent.color[2], JohnnysAccent.color[3], 0.5)
+		s.right:SetVertexColor(JohnnysAccent.color[1], JohnnysAccent.color[2], JohnnysAccent.color[3], 0.5)
 		s:EnableMouse(true)
 		s.onClick = function()
 			showHistory[name] = not showHistory[name] or nil

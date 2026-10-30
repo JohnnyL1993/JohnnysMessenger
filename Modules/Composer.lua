@@ -56,7 +56,7 @@ local function ShowQuickReplies(anchor)
 	if #menu == 1 then
 		table.insert(menu, { text = "None set yet", notCheckable = 1, disabled = 1 })
 	end
-	table.insert(menu, { text = "|cffb9e24aEdit quick replies...|r", notCheckable = 1, func = function()
+	table.insert(menu, { text = "|cff" .. JohnnysAccent.hex .. "Edit quick replies...|r", notCheckable = 1, func = function()
 		JM.MainFrame:ToggleSettings(true)
 	end })
 	table.insert(menu, { text = CANCEL or "Cancel", notCheckable = 1 })
@@ -189,6 +189,14 @@ end
 function Composer:Focus()
 	if editBox then
 		editBox:SetFocus()
+	end
+end
+
+-- Adds text at the cursor (keeps any draft) and saves it as the draft.
+function Composer:InsertText(text)
+	if editBox and text and text ~= "" then
+		editBox:Insert(text)
+		SaveDraft()
 	end
 end
 

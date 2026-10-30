@@ -2,10 +2,11 @@
 ## Title: Johnny's Messenger
 ## Notes: Teams-style whisper messenger. Left pane lists your conversations, right pane shows the open thread.
 ## Author: Johnny
-## Version: 2.5
-## SavedVariables: JohnnysMessengerDB
+## Version: 2.6
+## SavedVariables: JohnnysMessengerDB, JohnnysAccentDB
 ## DefaultState: Enabled
 
+Accent.lua
 Libs\Includes.xml
 
 Core.lua

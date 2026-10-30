@@ -263,8 +263,10 @@ end
 --   Redirect default whisper UX    --
 --------------------------------------
 
--- Replaces /w, /whisper, /t, /tell so typing them opens this addon's window
--- on that conversation instead of the default whisper edit box.
+-- Replaces /w, /whisper, /t, /tell so that SENDING one (macros, /w name msg)
+-- opens this addon's window on that conversation and sends from here.
+-- Starting a whisper in the chat box is handled by the ExtractTellTarget hook
+-- below.
 local origWhisperHandler = SlashCmdList["WHISPER"]
 if origWhisperHandler then
 	SlashCmdList["WHISPER"] = function(msg, editBox)
@@ -292,4 +294,44 @@ hooksecurefunc("ChatFrame_ReplyTell", function()
 		JM.MainFrame:SelectConversation(JM.Store.FormatUserName(target))
 		JM.MainFrame:FocusEditBox()
 	end
+end)
+
+-- Starting a whisper in the chat box ("/w name " with the space, or clicking a
+-- player name): the game parses the name out of the box via
+-- ChatEdit_ExtractTellTarget. Take over at once, like WIM did: close the chat
+-- box and open the conversation with the reply box focused.
+hooksecurefunc("ChatEdit_ExtractTellTarget", function(editBox, msg)
+	-- A post-hook can't see the return value. On success the box holds only
+	-- the text after the name, so it is shorter than msg; on failure it still
+	-- holds the "/w " prefix and is longer.
+	if editBox:GetAttribute("chatType") ~= "WHISPER" then
+		return
+	end
+	local target = editBox:GetAttribute("tellTarget")
+	if not target or target == "" or strlen(editBox:GetText() or "") >= strlen(msg or "") then
+		return
+	end
+	-- The active-window check leaves out macros and hidden boxes.
+	if not JM.Settings:Get("openOnWhisperStart") or InCombatLockdown() or editBox ~= ChatEdit_GetActiveWindow() then
+		return
+	end
+	-- We're inside the box's OnTextChanged, so change it a moment later. If the
+	-- whisper was sent in the meantime the box is closed and we do nothing,
+	-- which also covers a second queued call.
+	JM.Timer:After(0, function()
+		if InCombatLockdown() or editBox ~= ChatEdit_GetActiveWindow()
+			or editBox:GetAttribute("chatType") ~= "WHISPER" or editBox:GetAttribute("tellTarget") ~= target then
+			return
+		end
+		local body = editBox:GetText()
+		AutoComplete_HideIfAttachedTo(editBox)
+		editBox:SetText("")
+		ChatEdit_OnEscapePressed(editBox)
+		JM.MainFrame:Show()
+		JM.MainFrame:SelectConversation(JM.Store.FormatUserName(target))
+		JM.MainFrame:FocusEditBox()
+		if body and body ~= "" then
+			JM.Composer:InsertText(body)
+		end
+	end)
 end)

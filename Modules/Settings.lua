@@ -17,6 +17,9 @@ Settings.DEFAULTS = {
 	soundName = "default",
 	-- Whispering someone from the chat box (/w, /r) opens their conversation.
 	openOnSend = true,
+	-- Starting a whisper in the chat box (/w name, clicking a name) opens the
+	-- conversation straight away instead of waiting for the send.
+	openOnWhisperStart = true,
 	-- Stay in the reply box after sending; Esc or a click outside leaves it.
 	keepFocus = true,
 	-- Conversations open on today's messages; older ones sit behind a
@@ -113,7 +116,7 @@ StaticPopupDialogs["JM_DELETE_BEFORE_TODAY"] = {
 		JM.Minimap:UpdateBadge()
 		JM.MainFrame:RefreshList()
 		JM.MainFrame:RefreshMessages()
-		DEFAULT_CHAT_FRAME:AddMessage("|cffb9e24aMessenger:|r deleted " .. removed .. " older message" .. (removed == 1 and "" or "s") .. ".")
+		DEFAULT_CHAT_FRAME:AddMessage("|cff" .. JohnnysAccent.hex .. "Messenger:|r deleted " .. removed .. " older message" .. (removed == 1 and "" or "s") .. ".")
 	end,
 	timeout = 0,
 	whileDead = 1,
@@ -174,6 +177,7 @@ local CHECKBOXES = {
 	{ key = "autoOpen", label = "Open the window on incoming whispers (never in combat)" },
 	{ key = "hideFromChat", label = "Hide whispers from the default chat frame" },
 	{ key = "openOnSend", label = "Open the conversation when I whisper from chat (/w, /r)" },
+	{ key = "openOnWhisperStart", label = "Open the conversation as soon as I start a whisper" },
 	{ key = "sound", label = "Play a sound on incoming whispers" },
 	{ key = "soundWhenOpen", label = "...even while the window is open" },
 	{ key = "keepFocus", label = "Keep typing after sending (Esc or click outside to stop)" },
@@ -404,6 +408,18 @@ function Settings:BuildPage(parent)
 	bugBtn:SetScript("OnClick", function()
 		StaticPopup_Show("JM_ISSUES")
 	end)
+	y = y - 30
+
+	-- Accent colour, shared by every Johnny addon.
+	local accentBtn = Skin:CreateButton(content, 120, 22, "Accent colour...")
+	accentBtn:SetPoint("TOPLEFT", 6, y)
+	accentBtn:SetScript("OnClick", function()
+		JohnnysAccent:ShowMenu()
+	end)
+	local accentHint = content:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+	accentHint:SetPoint("LEFT", accentBtn, "RIGHT", 8, 0)
+	accentHint:SetTextColor(0.6, 0.6, 0.6)
+	accentHint:SetText("Changes every Johnny addon.")
 	y = y - 30
 
 	local reset = Skin:CreateButton(content, 120, 22, "Reset to defaults")

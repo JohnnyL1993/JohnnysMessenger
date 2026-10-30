@@ -93,7 +93,7 @@ function Skin:StyleButton(btn)
 	local highlight = btn:CreateTexture(nil, "HIGHLIGHT")
 	highlight:SetAllPoints()
 	highlight:SetTexture(self.WHITE)
-	highlight:SetVertexColor(0.725, 0.886, 0.290, 0.14)
+	highlight:SetVertexColor(JohnnysAccent.color[1], JohnnysAccent.color[2], JohnnysAccent.color[3], 0.14)
 	btn:SetHighlightTexture(highlight)
 
 	btn:SetScript("OnMouseDown", function(self)
@@ -104,6 +104,10 @@ function Skin:StyleButton(btn)
 	btn:SetScript("OnMouseUp", function(self)
 		self:SetBackdropColor(0.090, 0.114, 0.125, 0.95)
 	end)
+	-- Accent effects (glow, pulse, ripple... - see Accent.lua).
+	if JohnnysFX then
+		JohnnysFX:Attach(btn)
+	end
 end
 
 function Skin:CreateButton(parent, width, height, text, template)
@@ -176,7 +180,7 @@ function Skin:CreateCheckbox(parent, label, onChange)
 	check:SetTexture(self.WHITE)
 	check:SetPoint("TOPLEFT", 3, -3)
 	check:SetPoint("BOTTOMRIGHT", -3, 3)
-	check:SetVertexColor(0.725, 0.886, 0.290, 1)
+	check:SetVertexColor(JohnnysAccent.color[1], JohnnysAccent.color[2], JohnnysAccent.color[3], 1)
 	cb:SetCheckedTexture(check)
 
 	local fs = cb:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -219,7 +223,7 @@ function Skin:CreateSlider(parent, label, minV, maxV, step, format, onChange)
 	slider:SetThumbTexture(self.WHITE)
 	local thumb = slider:GetThumbTexture()
 	thumb:SetSize(8, 12)
-	thumb:SetVertexColor(0.725, 0.886, 0.290, 1)
+	thumb:SetVertexColor(JohnnysAccent.color[1], JohnnysAccent.color[2], JohnnysAccent.color[3], 1)
 	slider:SetMinMaxValues(minV, maxV)
 	slider:SetValueStep(step)
 	slider:EnableMouseWheel(false)
@@ -269,7 +273,7 @@ function Skin:CreateBadge(parent)
 	local badge = CreateFrame("Frame", nil, parent)
 	badge:SetSize(16, 14)
 	badge:SetBackdrop({ bgFile = self.WHITE })
-	badge:SetBackdropColor(0.725, 0.886, 0.290, 1)
+	badge:SetBackdropColor(JohnnysAccent.color[1], JohnnysAccent.color[2], JohnnysAccent.color[3], 1)
 	local fs = badge:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	fs:SetPoint("CENTER", 0, 0)
 	fs:SetTextColor(0, 0, 0)
@@ -358,7 +362,7 @@ Skin.C = {
 	text = { 0.902, 0.925, 0.918 },
 	muted = { 0.604, 0.659, 0.651 },
 	dim = { 0.560, 0.620, 0.610 },
-	accent = { 0.725, 0.886, 0.290 },
+	accent = JohnnysAccent.color,
 	short = { 1.000, 0.450, 0.400 },
 }
 Skin.FONT_HEAD = "Fonts\\ARIALN.TTF"

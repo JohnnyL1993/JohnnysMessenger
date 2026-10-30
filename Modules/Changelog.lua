@@ -14,6 +14,14 @@ local Skin = NS.Skin
 
 local ENTRIES = {
 	{
+		version = "2.6",
+		changes = {
+			"Starting a whisper from chat (typing /w name and a space, or clicking a player's name) opens their conversation in Messenger straight away, with anything you've typed moved into the reply box - never in combat. Can be turned off in Settings.",
+			"Accent colour: pick your own highlight colour, shared across Johnny's addons, along with optional effects such as glow, shimmer and ripple.",
+			"A conversation's row lights up for a moment when a new message arrives.",
+		},
+	},
+	{
 		version = "2.5",
 		changes = {
 			"Export conversation (right-click a message or a contact): the whole chat as plain text to select and copy.",

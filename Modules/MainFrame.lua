@@ -331,6 +331,7 @@ function MainFrame:OnMessageReceived(name)
 		self:RefreshMessages(true)
 	end
 	self:RefreshList()
+	JM.ContactList:FlashRow(name)
 end
 
 function MainFrame:HandleIncomingWhisper(name)
@@ -612,7 +613,7 @@ RefreshEmptyPane = function()
 			JM.PlayerInfo:SetClassIcon(row.icon, info.class)
 			local name = JM.ClassColor:ColorName(entry.name, info.class)
 			if (convo.unreadCount or 0) > 0 then
-				name = name .. string.format("  |cffb9e24a%d new|r", convo.unreadCount)
+				name = name .. string.format("  |cff" .. JohnnysAccent.hex .. "%d new|r", convo.unreadCount)
 			end
 			row.nameText:SetText(name)
 			row.timeText:SetText(JM.ContactList.RelativeTime(convo.lastMessageTime))
